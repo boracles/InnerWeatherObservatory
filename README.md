@@ -1,53 +1,15 @@
-# Inner Weather Observatory
+# 내면 기상 관측소
 
-〈내면 기상 관측소〉는 지금 내 안에서 움직이는 날씨와, 그 날씨가 무엇을 지키려 하는지 살펴보는 인터랙티브 웹 스토리입니다.
+**지금 내 안에서 움직이는 날씨와, 그 날씨가 무엇을 지키려 하는지 관측하는 인터랙티브 스토리입니다.**
 
-Twine·SugarCube로 이야기와 상태를 관리하고, Babylon.js로 관측소와 세 개의 방을 구현했습니다.
+마음은 언제나 하나의 목소리로 움직이지 않습니다. 어떤 부분은 앞서 걱정하고, 어떤 부분은 감정을 덮어두며, 또 어떤 부분은 아무것도 느끼지 않게 함으로써 우리를 보호합니다.
 
-## 바로 실행하기
+이 작품에서 이러한 내면의 반응은 안개와 파도, 바람과 빛으로 나타납니다. 관측소의 장치와 세 개의 방을 천천히 살펴보며 지금 가장 가까이 느껴지는 날씨, 그 날씨가 하는 일, 그리고 지키려는 것을 발견할 수 있습니다.
 
-저장소 루트의 `index.html`이 배포용 단일 파일입니다. GitHub Pages에서는 별도 서버 없이 이 파일이 바로 실행됩니다.
+관측은 감정을 분류하거나 더 좋은 상태로 바꾸는 과정이 아닙니다. 안개를 걷거나 파도를 잠재우기보다, 그 반응이 언제 나타나고 무엇을 위해 존재해 왔는지 조금 떨어져 바라보는 과정입니다.
 
-## 프로젝트 구조
+〈내면 기상 관측소〉는 내면가족체계 모델(Internal Family Systems, IFS)에서 영감을 받았습니다. IFS의 개념을 진단이나 치료 절차가 아닌, 날씨와 공간을 통해 자신의 반응을 바라보는 경험으로 옮겼습니다.
 
-```text
-.
-├── index.html                         # GitHub Pages 배포 파일
-├── src
-│   ├── story
-│   │   └── 내면 기상 관측소_IFS.twee  # Twine/SugarCube 원본
-│   └── 3d
-│       ├── weather-station-base.html  # Babylon.js 관측소 원본
-│       ├── weather-station-babylon.html
-│       ├── twine-bridge.js
-│       ├── twine-bridge.css
-│       └── room-markers.html
-└── tools
-    ├── integrate-3d.mjs
-    └── embed-station.mjs
-```
+관측이 끝난 뒤에도 날씨는 남아 있을 수 있습니다. 달라지는 것은 날씨 자체가 아니라, 그것을 바라보는 위치일지도 모릅니다.
 
-## 수정 후 다시 빌드하기
-
-1. Node.js와 [Tweego](https://www.motoslave.net/tweego/)를 설치합니다.
-2. 저장소 루트에서 다음 명령을 실행합니다.
-
-```bash
-npm run build
-```
-
-이 명령은 Babylon.js 관측소를 다시 구성하고 Twee에 삽입한 뒤, 루트의 `index.html`을 새로 만듭니다.
-
-Twine 앱에서 편집할 때는 `src/story/내면 기상 관측소_IFS.twee`를 가져오면 됩니다.
-
-## 기술
-
-- Twine / SugarCube 2
-- Babylon.js
-- JavaScript / HTML / CSS
-
-## 제작
-
-기획·경험 설계·글·3D 관측소 모델·인터랙션: 윤보라
-
-© 2026 윤보라. All rights reserved.
+[내면 기상 관측소 입장하기](https://boracles.art/InnerWeatherObservatory/)
