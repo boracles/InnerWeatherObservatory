@@ -1,0 +1,11 @@
+{
+  "name": "inner-weather-observatory",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "prepare:story": "node tools/integrate-3d.mjs && node tools/embed-station.mjs",
+    "build": "npm run prepare:story && tweego -f sugarcube-2 -o index.html \"src/story/내면 기상 관측소_IFS.twee\""
+  }
+}
+

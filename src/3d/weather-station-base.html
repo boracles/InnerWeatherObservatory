@@ -1,0 +1,2877 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<title>Portable Weather Station — Babylon.js</title>
+<script src="https://cdn.babylonjs.com/babylon.js"></script>
+<link rel="stylesheet" href="_ds/classical-a30268d5-4d32-4be7-8ebd-4aeeaea2cd7f/styles.css">
+<style>
+  html,body{margin:0;height:100%;background:#141110;overflow:hidden}
+  #c{display:block;width:100vw;height:100vh;outline:none;touch-action:none}
+  #tag{position:fixed;left:18px;bottom:14px;font-family:var(--font-body,Georgia,serif);
+       font-size:12px;letter-spacing:.14em;text-transform:uppercase;color:#b68235;opacity:.75}
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<script>
+const canvas = document.getElementById('c');
+const engine = new BABYLON.Engine(canvas, true, { preserveDrawingBuffer: true, stencil: false }, true);
+engine.setHardwareScalingLevel(1 / Math.min(window.devicePixelRatio || 1, 1.4));
+const scene = new BABYLON.Scene(engine);
+scene.useRightHandedSystem = true;                 // match three.js coordinates
+const DARK = new BABYLON.Color3(0.078, 0.067, 0.063);
+scene.clearColor = new BABYLON.Color4(DARK.r, DARK.g, DARK.b, 1);
+scene.autoClear = true;
+
+const V3 = (x, y, z) => new BABYLON.Vector3(x, y, z);
+const hexc = (h) => BABYLON.Color3.FromHexString('#' + h.toString(16).padStart(6, '0')).toLinearSpace();
+
+/* ---------- lighting: the same neutral studio, dimmed to a lamplit key ---------- */
+const hemi = new BABYLON.HemisphericLight('hemi', V3(0, 1, 0), scene);
+hemi.diffuse = new BABYLON.Color3(1, 1, 1);
+hemi.groundColor = hexc(0xd8d2c4).scale(0.55);
+hemi.intensity = 0.30;
+hemi.specular = new BABYLON.Color3(0.1, 0.1, 0.1);
+
+const key = new BABYLON.DirectionalLight('key', V3(-4, -7, -5).normalize(), scene);
+key.position = V3(1.2, 2.1, 1.5);
+key.intensity = 1.9;
+const fill = new BABYLON.DirectionalLight('fill', V3(5, -3, 4).normalize(), scene);
+fill.diffuse = hexc(0xfff4e6);
+fill.intensity = 0.22;
+fill.specular = new BABYLON.Color3(0.2, 0.2, 0.2);
+
+const shadow = new BABYLON.ShadowGenerator(2048, key);
+shadow.usePercentageCloserFiltering = true;
+shadow.filteringQuality = BABYLON.ShadowGenerator.QUALITY_MEDIUM;
+shadow.bias = 0.00035;
+shadow.normalBias = 0.006;
+const casters = shadow.getShadowMap().renderList;
+
+/* ---------- material helper ---------- */
+const pbr = (name, hex, rough, metal, o = {}) => {
+  const m = new BABYLON.PBRMetallicRoughnessMaterial(name, scene);
+  m.baseColor = hexc(hex);
+  m.roughness = rough; m.metallic = metal;
+  m.maxSimultaneousLights = 8;
+  if (o.alpha !== undefined) { m.alpha = o.alpha; m.transparencyMode = 2; }
+  if (o.double) m.backFaceCulling = false;
+  if (o.noDepth) m.disableDepthWrite = true;
+  if (o.emissive) m.emissiveColor = hexc(o.emissive).scale(o.emissiveIntensity || 1);
+  return m;
+};
+
+const M = {
+  caseWood:  pbr('caseWood',  0x4b3627, 0.85, 0.05),
+  paleWood:  pbr('paleWood',  0xc3ac86, 0.80, 0.02),
+  lining:    pbr('lining',    0x39415a, 0.95, 0.00),
+  brass:     pbr('brass',     0xc79a4e, 0.35, 0.40),
+  iron:      pbr('iron',      0x312d29, 0.60, 0.35),
+  glass:     pbr('glass',     0xdfe6e6, 0.08, 0.05, { alpha: 0.22, double: true }),
+  cloud:     pbr('cloud',     0xf4f2ec, 1.00, 0.00),
+  linenPale: pbr('linenPale', 0xded2b8, 0.95, 0.00, { double: true }),
+  linenBlue: pbr('linenBlue', 0x76809a, 0.95, 0.00, { double: true }),
+  linenRust: pbr('linenRust', 0x9c5f3e, 0.95, 0.00, { double: true }),
+  paper:     pbr('paper',     0xe9e2cf, 0.95, 0.00, { double: true }),
+};
+
+/* ---------- geometry helpers, mirroring the three.js scene 1:1 ---------- */
+const grp = (name, parent) => {
+  const n = new BABYLON.TransformNode(name, scene);
+  if (parent) n.parent = parent;
+  return n;
+};
+const finish = (m, name, parent, mat, pos, rot) => {
+  m.name = name;
+  if (parent) m.parent = parent;
+  if (mat) m.material = mat;
+  if (pos) m.position.set(pos[0], pos[1], pos[2]);
+  if (rot) m.rotationQuaternion = BABYLON.Quaternion.RotationYawPitchRoll(rot[1] || 0, rot[0] || 0, rot[2] || 0);
+  m.receiveShadows = true;
+  casters.push(m);
+  return m;
+};
+const noCast = (m) => { const i = casters.indexOf(m); if (i >= 0) casters.splice(i, 1); return m; };
+
+const box = (p, name, w, h, d, mat, pos, rot) =>
+  finish(BABYLON.MeshBuilder.CreateBox(name, { width: w, height: h, depth: d }, scene), name, p, mat, pos, rot);
+const cyl = (p, name, rt, rb, h, mat, pos, rot, seg = 32) =>
+  finish(BABYLON.MeshBuilder.CreateCylinder(name, { diameterTop: rt * 2, diameterBottom: rb * 2, height: h, tessellation: seg }, scene), name, p, mat, pos, rot);
+const cone = (p, name, r, h, mat, pos, rot, seg = 24, open = false) =>
+  finish(BABYLON.MeshBuilder.CreateCylinder(name, { diameterTop: 0, diameterBottom: r * 2, height: h, tessellation: seg,
+    cap: open ? BABYLON.Mesh.NO_CAP : BABYLON.Mesh.CAP_ALL, sideOrientation: open ? BABYLON.Mesh.DOUBLESIDE : undefined }, scene), name, p, mat, pos, rot);
+const sph = (p, name, r, mat, pos, seg = 24, slice) =>
+  finish(BABYLON.MeshBuilder.CreateSphere(name, { diameter: r * 2, segments: seg, slice, sideOrientation: slice ? BABYLON.Mesh.DOUBLESIDE : undefined }, scene), name, p, mat, pos);
+// three's TorusGeometry lies in the XY plane; a tube along a circular path matches it (and takes arcs)
+const torus = (p, name, R, r, mat, pos, rot, arc = Math.PI * 2, tess = 40) => {
+  const path = [];
+  for (let i = 0; i <= tess; i++) { const a = arc * i / tess; path.push(V3(Math.cos(a) * R, Math.sin(a) * R, 0)); }
+  return finish(BABYLON.MeshBuilder.CreateTube(name, { path, radius: r, tessellation: 12, cap: BABYLON.Mesh.NO_CAP, sideOrientation: BABYLON.Mesh.DOUBLESIDE }, scene), name, p, mat, pos, rot);
+};
+const lathe = (p, name, pts, seg, mat, pos, rot) =>
+  finish(BABYLON.MeshBuilder.CreateLathe(name, { shape: pts.map(v => V3(v[0], v[1], 0)), tessellation: seg, cap: BABYLON.Mesh.NO_CAP, sideOrientation: BABYLON.Mesh.DOUBLESIDE }, scene), name, p, mat, pos, rot);
+const wire = (p, name, a, b, r = 0.0015, mat = M.brass) => {
+  const A = V3(...a), B = V3(...b);
+  const m = BABYLON.MeshBuilder.CreateTube(name, { path: [A, B], radius: r, tessellation: 6, cap: BABYLON.Mesh.NO_CAP }, scene);
+  return finish(m, name, p, mat);
+};
+// three's PlaneGeometry, kept in plane space so the wave code ports unchanged
+const planeData = (w, h, sx, sy) => {
+  const pos = [], idx = [], uv = [];
+  for (let iy = 0; iy <= sy; iy++) for (let ix = 0; ix <= sx; ix++) {
+    pos.push(-w / 2 + w * ix / sx, h / 2 - h * iy / sy, 0);
+    uv.push(ix / sx, 1 - iy / sy);
+  }
+  for (let iy = 0; iy < sy; iy++) for (let ix = 0; ix < sx; ix++) {
+    const a = ix + (sx + 1) * iy, b = ix + (sx + 1) * (iy + 1), c = (ix + 1) + (sx + 1) * (iy + 1), d = (ix + 1) + (sx + 1) * iy;
+    idx.push(a, b, d, b, c, d);
+  }
+  return { pos, idx, uv };
+};
+const planeMesh = (p, name, w, h, sx, sy, mat, pos, rot, updatable) => {
+  const g = planeData(w, h, sx, sy);
+  const vd = new BABYLON.VertexData();
+  vd.positions = g.pos; vd.indices = g.idx; vd.uvs = g.uv;
+  vd.normals = []; BABYLON.VertexData.ComputeNormals(g.pos, g.idx, vd.normals);
+  const m = new BABYLON.Mesh(name, scene);
+  vd.applyToMesh(m, !!updatable);
+  finish(m, name, p, mat, pos, rot);
+  return { mesh: m, pos: Float32Array.from(g.pos), base: Float32Array.from(g.pos), idx: g.idx, nrm: new Float32Array(g.pos.length) };
+};
+const flipPlane = (P) => {
+  const n = P.mesh.getVerticesData(BABYLON.VertexBuffer.NormalKind);
+  for (let i = 0; i < n.length; i++) n[i] = -n[i];
+  P.mesh.updateVerticesData(BABYLON.VertexBuffer.NormalKind, n);
+};
+const reverseWinding = (P) => {
+  const a = P.idx;
+  for (let i = 0; i < a.length; i += 3) { const t = a[i + 1]; a[i + 1] = a[i + 2]; a[i + 2] = t; }
+  P.mesh.setIndices(a);
+};
+const pushPlane = (P) => {
+  P.mesh.updateVerticesData(BABYLON.VertexBuffer.PositionKind, P.pos);
+  BABYLON.VertexData.ComputeNormals(P.pos, P.idx, P.nrm);
+  P.mesh.updateVerticesData(BABYLON.VertexBuffer.NormalKind, P.nrm);
+};
+
+const root = grp('weatherStation');
+
+/* ---------- suitcase ---------- */
+const CW = 0.74, CD = 0.44, CH = 0.19;
+const TOP = CH;
+const caseG = grp('suitcase', root);
+
+box(caseG, 'caseFloor', CW, 0.022, CD, M.caseWood, [0, 0.011, 0]);
+box(caseG, 'caseWallBack', CW, CH, 0.020, M.caseWood, [0, CH / 2, -CD / 2 + 0.01]);
+box(caseG, 'caseWallFrontL', 0.320, CH, 0.020, M.caseWood, [-0.210, CH / 2, CD / 2 - 0.01]);
+box(caseG, 'caseWallFrontR', 0.100, CH, 0.020, M.caseWood, [0.320, CH / 2, CD / 2 - 0.01]);
+box(caseG, 'caseWallFrontTop', 0.320, 0.090, 0.020, M.caseWood, [0.110, 0.145, CD / 2 - 0.01]);
+box(caseG, 'caseWallFrontSill', 0.320, 0.026, 0.020, M.caseWood, [0.110, 0.013, CD / 2 - 0.01]);
+box(caseG, 'caseWallLeft', 0.020, CH, CD, M.caseWood, [-CW / 2 + 0.01, CH / 2, 0]);
+box(caseG, 'caseWallRight', 0.020, CH, CD, M.caseWood, [CW / 2 - 0.01, CH / 2, 0]);
+box(caseG, 'caseLining', CW - 0.04, 0.004, CD - 0.04, M.lining, [0, 0.0265, 0]);
+for (const sx of [-1, 1]) for (const sz of [-1, 1])
+  box(caseG, 'cornerCap', 0.05, 0.05, 0.05, M.iron, [sx * (CW / 2 - 0.02), 0.02, sz * (CD / 2 - 0.02)]);
+box(caseG, 'beltBandL', 0.03, CH + 0.004, CD + 0.004, M.iron, [-0.19, CH / 2, 0]);
+box(caseG, 'beltBandR', 0.03, CH + 0.004, CD + 0.004, M.iron, [0.315, CH / 2, 0]);
+
+const handle = grp('handle', caseG);
+torus(handle, 'handleStrap', 0.055, 0.010, M.caseWood, [0, 0.152, CD / 2 + 0.012], [0, 0, Math.PI], Math.PI, 28);
+for (const sx of [-1, 1]) box(handle, 'handleMount', 0.024, 0.042, 0.014, M.iron, [sx * 0.055, 0.150, CD / 2 + 0.006]);
+
+const FZ = CD / 2;
+const latchRig = (x) => {
+  const g = grp('latch', caseG); g.position.x = x;
+  box(g, 'latchPlate', 0.062, 0.050, 0.006, M.iron, [0, 0.148, FZ + 0.002]);
+  for (const sx of [-1, 1]) for (const sy of [-1, 1])
+    sph(g, 'latchRivet', 0.0042, M.brass, [sx * 0.023, 0.148 + sy * 0.017, FZ + 0.006], 12);
+  cyl(g, 'latchHinge', 0.005, 0.005, 0.040, M.brass, [0, 0.166, FZ + 0.008], [0, 0, Math.PI / 2], 16);
+  const hasp = grp('hasp', g);
+  hasp.position.set(0, 0.166, FZ + 0.008); hasp.rotation.x = 0.12;
+  box(hasp, 'haspArm', 0.030, 0.056, 0.005, M.brass, [0, -0.028, 0.001]);
+  box(hasp, 'haspSlot', 0.010, 0.020, 0.008, M.iron, [0, -0.046, 0.000]);
+  cyl(hasp, 'haspTip', 0.015, 0.015, 0.005, M.brass, [0, -0.056, 0.001], [Math.PI / 2, 0, 0], 20);
+  box(g, 'catchPlate', 0.034, 0.026, 0.005, M.iron, [0, 0.100, FZ + 0.002]);
+  torus(g, 'catchStaple', 0.008, 0.0028, M.brass, [0, 0.104, FZ + 0.007], [Math.PI / 2, 0, 0], Math.PI * 2, 20);
+  cyl(g, 'escutcheon', 0.013, 0.013, 0.006, M.brass, [0, 0.074, FZ + 0.001], [Math.PI / 2, 0, 0], 24);
+  cyl(g, 'keyholeBore', 0.0035, 0.0035, 0.005, M.iron, [0, 0.077, FZ - 0.0005], [Math.PI / 2, 0, 0], 14);
+  box(g, 'keyholeSlot', 0.0035, 0.008, 0.005, M.iron, [0, 0.071, FZ - 0.0005]);
+};
+latchRig(-0.28); latchRig(0.28);
+
+const lock = grp('lockPlate', caseG);
+box(lock, 'lockBack', 0.072, 0.058, 0.006, M.iron, [0, 0.128, FZ + 0.002]);
+box(lock, 'lockShoulder', 0.072, 0.010, 0.010, M.iron, [0, 0.156, FZ + 0.004]);
+for (const sx of [-1, 1]) for (const sy of [-1, 1])
+  sph(lock, 'lockRivet', 0.0045, M.brass, [sx * 0.027, 0.128 + sy * 0.020, FZ + 0.006], 12);
+cyl(lock, 'lockEscutcheon', 0.016, 0.016, 0.008, M.brass, [0, 0.124, FZ + 0.005], [Math.PI / 2, 0, 0], 28);
+cyl(lock, 'lockBore', 0.0045, 0.0045, 0.008, M.iron, [0, 0.128, FZ + 0.0035], [Math.PI / 2, 0, 0], 14);
+box(lock, 'lockSlot', 0.004, 0.010, 0.008, M.iron, [0, 0.120, FZ + 0.0035]);
+sph(lock, 'lockKeyTag', 0.006, M.brass, [0.030, 0.164, FZ + 0.006], 12);
+for (const sx of [-1, 1]) for (const sy of [-1, 1])
+  sph(handle, 'handleRivet', 0.0035, M.brass, [sx * 0.055, 0.150 + sy * 0.013, FZ + 0.014], 12);
+
+/* ---------- lid ---------- */
+const lid = grp('lid', root);
+lid.position.set(0, TOP, -CD / 2 + 0.01);
+lid.rotation.x = -0.30;
+const LH = CD * 0.92;
+box(lid, 'lidPanel', CW, LH, 0.024, M.caseWood, [0, LH / 2, -0.012]);
+box(lid, 'lidRimTop', CW, 0.020, 0.030, M.caseWood, [0, LH - 0.01, 0.008]);
+for (const sx of [-1, 1]) box(lid, 'lidRimSide', 0.020, LH, 0.030, M.caseWood, [sx * (CW / 2 - 0.01), LH / 2, 0.008]);
+const lidFace = grp('lidInterior', lid);
+const windowPane = box(lidFace, 'lidLining', CW - 0.05, LH - 0.05, 0.004, M.lining, [0, LH / 2, 0.0035]);
+noCast(windowPane);
+box(lidFace, 'lidMat', CW - 0.03, LH - 0.03, 0.004, M.caseWood, [0, LH / 2, 0.0028]);
+
+const baro = grp('barometer', lidFace);
+baro.position.set(0.245, 0.305, 0.006);
+box(baro, 'baroBracket', 0.040, 0.040, 0.010, M.caseWood, [0, 0, -0.002]);
+cyl(baro, 'baroDial', 0.048, 0.048, 0.008, M.linenPale, [0, 0, 0.006], [Math.PI / 2, 0, 0], 40);
+torus(baro, 'baroBezel', 0.050, 0.0055, M.brass, [0, 0, 0.010], null, Math.PI * 2, 44);
+for (let i = 0; i < 24; i++) {
+  const a = i * Math.PI / 12, major = i % 2 === 0;
+  const r = major ? 0.038 : 0.041, len = major ? 0.011 : 0.006;
+  box(baro, 'baroTick', 0.0022, len, 0.002, M.iron, [Math.sin(a) * r, Math.cos(a) * r, 0.0105], [0, 0, -a]);
+}
+const needle = grp('baroNeedle', baro);
+needle.position.set(0, 0, 0.0125); needle.rotation.z = -0.75;
+box(needle, 'baroNeedleBlade', 0.0028, 0.050, 0.0016, M.iron, [0, 0.016, 0]);
+box(needle, 'baroNeedleTail', 0.0045, 0.014, 0.0016, M.iron, [0, -0.008, 0]);
+const setHand = grp('baroSetHand', baro);
+setHand.position.set(0, 0, 0.0140); setHand.rotation.z = 1.15;
+box(setHand, 'baroSetBlade', 0.0016, 0.054, 0.0012, M.brass, [0, 0.019, 0]);
+cyl(baro, 'baroHub', 0.005, 0.005, 0.008, M.brass, [0, 0, 0.0155], [Math.PI / 2, 0, 0], 16);
+noCast(cyl(baro, 'baroGlass', 0.047, 0.047, 0.002, M.glass, [0, 0, 0.0175], [Math.PI / 2, 0, 0], 40));
+
+const plate = grp('makersPlate', lidFace);
+plate.position.set(0.300, 0.372, 0.006);
+box(plate, 'plateBody', 0.078, 0.026, 0.004, M.brass, [0, 0, 0]);
+for (let i = 0; i < 3; i++)
+  box(plate, 'plateEngraving', 0.052 - i * 0.014, 0.0022, 0.004, M.iron, [0, 0.007 - i * 0.007, 0.0012]);
+for (const sx of [-1, 1]) sph(plate, 'plateScrew', 0.0035, M.brass, [sx * 0.033, 0, 0.0028], 12);
+
+/* ---------- instrument deck + flaps ---------- */
+const deck = grp('deck', root);
+box(deck, 'deckBoard', CW - 0.008, 0.024, 0.225, M.paleWood, [0, TOP, -0.105]);
+box(deck, 'deckLip', CW - 0.008, 0.010, 0.014, M.paleWood, [0, TOP + 0.014, 0.0005]);
+
+const flap = (sx, name) => {
+  const g = grp(name, root);
+  g.position.set(sx * (CW / 2 - 0.008), TOP - 0.012, -0.05);
+  g.rotation.z = sx * 0.05;
+  box(g, name + 'Panel', 0.30, 0.016, 0.32, M.paleWood, [sx * 0.15, 0, 0]);
+  box(g, name + 'EdgeOuter', 0.016, 0.024, 0.324, M.caseWood, [sx * 0.294, 0, 0]);
+  for (const sz of [-1, 1]) box(g, name + 'EdgeSide', 0.304, 0.024, 0.016, M.caseWood, [sx * 0.152, 0, sz * 0.153]);
+  box(g, name + 'Hinge', 0.02, 0.014, 0.10, M.brass, [sx * 0.008, 0.004, 0]);
+  return g;
+};
+flap(-1, 'flapLeft'); flap(1, 'flapRight');
+
+/* ---------- gramophone horn ---------- */
+const hornG = grp('gramophoneHorn', root);
+hornG.position.set(-0.27, TOP + 0.012, -0.14);
+cyl(hornG, 'hornFoot', 0.032, 0.038, 0.014, M.brass, [0, 0.007, 0]);
+cyl(hornG, 'hornPost', 0.008, 0.010, 0.22, M.brass, [0, 0.12, 0]);
+cyl(hornG, 'hornCollar', 0.014, 0.014, 0.012, M.brass, [0, 0.155, 0]);
+const hornArm = grp('hornArm', hornG);
+hornArm.position.set(0, 0.23, 0);
+hornArm.rotationQuaternion = BABYLON.Quaternion.RotationYawPitchRoll(-Math.PI / 2, 0, -0.85);
+cyl(hornArm, 'hornNeck', 0.011, 0.014, 0.10, M.brass, [0, 0.05, 0]);
+const hornPts = [];
+for (let i = 0; i <= 16; i++) { const t = i / 16; hornPts.push([0.014 + 0.088 * Math.pow(t, 2.4), 0.20 * t]); }
+lathe(hornArm, 'hornBell', hornPts, 48, M.brass, [0, 0.10, 0]);
+torus(hornArm, 'hornRim', 0.101, 0.005, M.brass, [0, 0.30, 0], [Math.PI / 2, 0, 0], Math.PI * 2, 48);
+
+/* ---------- bell jar with the captive cloud ---------- */
+const jarG = grp('bellJar', root);
+jarG.position.set(-0.09, TOP + 0.012, -0.10);
+cyl(jarG, 'jarBase', 0.082, 0.088, 0.024, M.caseWood, [0, 0.012, 0]);
+cyl(jarG, 'jarBaseRing', 0.086, 0.086, 0.006, M.brass, [0, 0.026, 0]);
+const jarPts = [];
+const domeR = (t) => Math.sqrt(Math.max(0, 1 - Math.pow(t, 6)));
+const R_OUT = 0.066, H_OUT = 0.150, WALL = 0.0045;
+for (let i = 0; i <= 40; i++) { const t = i / 40; jarPts.push([Math.max(0.0006, R_OUT * domeR(t)), H_OUT * t]); }
+for (let i = 40; i >= 0; i--) { const t = i / 40; jarPts.push([Math.max(0.0003, (R_OUT - WALL) * domeR(t)), H_OUT * t - WALL]); }
+jarPts.push([R_OUT, 0]);
+const glassJarMat = pbr('jarGlass', 0xdfe6e6, 0.08, 0.05, { alpha: 0.22, double: true, noDepth: true });
+noCast(lathe(jarG, 'jarGlass', jarPts, 64, glassJarMat, [0, 0.030, 0]));
+const jarPickMat = pbr('jarPick', 0xffffff, 1, 0, { alpha: 0 });
+const jarPickBox = cyl(jarG, 'jarPickTarget', 0.082, 0.082, 0.200, jarPickMat, [0, 0.100, 0], null, 12);
+jarPickBox.visibility = 0; jarPickBox.isPickable = true; noCast(jarPickBox);
+jarPickBox.receiveShadows = false;
+
+const cloudG = grp('jarCloud', jarG);
+cloudG.position.set(0, 0.070, 0);
+const cloudMesh = BABYLON.MeshBuilder.CreateSphere('cloudMass', { diameter: 0.060, segments: 44, updatable: true }, scene);
+finish(cloudMesh, 'cloudMass', cloudG, M.cloud, [0, 0, 0]);
+noCast(cloudMesh);
+cloudMesh.scaling.set(1.10, 0.82, 1.02);
+const cArr = cloudMesh.getVerticesData(BABYLON.VertexBuffer.PositionKind);
+const cIdx = cloudMesh.getIndices();
+const cCount = cArr.length / 3;
+const cPosArr = new Float32Array(cArr);
+const cNrm = new Float32Array(cArr.length);
+const cDir = new Float32Array(cArr.length);
+for (let i = 0; i < cCount; i++) {
+  const x = cArr[i * 3], y = cArr[i * 3 + 1], z = cArr[i * 3 + 2];
+  const l = Math.hypot(x, y, z) || 1;
+  cDir[i * 3] = x / l; cDir[i * 3 + 1] = y / l; cDir[i * 3 + 2] = z / l;
+}
+const LOBES = [];
+for (let i = 0; i < 7; i++) {
+  const a = i * 2.399963, y = 1 - (i + 0.5) * 2 / 7, r = Math.sqrt(Math.max(0, 1 - y * y));
+  LOBES.push({ x: Math.cos(a) * r, y: y * 0.6, z: Math.sin(a) * r, amp: 0.008 + 0.004 * ((i * 3) % 4) / 3, ph: i * 1.7 });
+}
+
+/* ---------- anemometer ---------- */
+const anemo = grp('anemometer', root);
+anemo.position.set(0.055, TOP + 0.012, -0.15);
+cyl(anemo, 'anemoFoot', 0.026, 0.032, 0.012, M.brass, [0, 0.006, 0]);
+cyl(anemo, 'anemoMast', 0.007, 0.009, 0.20, M.brass, [0, 0.10, 0]);
+cyl(anemo, 'anemoHub', 0.016, 0.016, 0.018, M.brass, [0, 0.205, 0]);
+const cups = grp('anemoCups', anemo);
+cups.position.set(0, 0.220, 0);
+for (let i = 0; i < 3; i++) {
+  const a = i * Math.PI * 2 / 3, L = 0.062;
+  const arm = cyl(cups, 'anemoArm', 0.003, 0.003, L, M.brass, [Math.cos(a) * L / 2, 0, Math.sin(a) * L / 2]);
+  arm.rotationQuaternion = BABYLON.Quaternion.RotationAxis(V3(0, 0, 1), -Math.PI / 2)
+    .multiply(BABYLON.Quaternion.RotationAxis(V3(0, 1, 0), 0));
+  arm.rotationQuaternion = BABYLON.Quaternion.FromUnitVectorsToRef
+    ? BABYLON.Quaternion.FromUnitVectorsToRef(V3(0, 1, 0), V3(Math.cos(a), 0, Math.sin(a)), new BABYLON.Quaternion())
+    : arm.rotationQuaternion;
+  sph(cups, 'anemoCup', 0.021, M.brass, [Math.cos(a) * L, 0.004, Math.sin(a) * L], 24, 0.5)
+    .rotationQuaternion = BABYLON.Quaternion.RotationYawPitchRoll(-a, 0, Math.PI / 2);
+}
+cyl(anemo, 'anemoCollar', 0.010, 0.012, 0.010, M.brass, [0, 0.214, 0], null, 16);
+
+/* ---------- wind rose ---------- */
+const rose = grp('windRose', root);
+rose.position.set(0.23, TOP + 0.012, -0.14);
+cyl(rose, 'roseFoot', 0.030, 0.036, 0.014, M.brass, [0, 0.007, 0]);
+cyl(rose, 'rosePost', 0.008, 0.010, 0.14, M.brass, [0, 0.08, 0]);
+const disc = grp('roseDisc', rose);
+disc.position.set(0, 0.16, 0.006); disc.rotation.x = 0.10;
+cyl(disc, 'roseBoard', 0.118, 0.118, 0.010, M.paleWood, [0, 0, 0], [Math.PI / 2, 0, 0], 48);
+const sectorMats = [M.linenPale, M.linenBlue, M.linenRust, M.linenPale, M.linenBlue, M.linenPale, M.linenRust, M.linenBlue];
+sectorMats.forEach((mat, i) => {
+  for (const sz of [1, -1]) {
+    const d = BABYLON.MeshBuilder.CreateDisc('roseSector', { radius: 0.112, tessellation: 24, arc: 0.125, sideOrientation: BABYLON.Mesh.DOUBLESIDE }, scene);
+    finish(d, 'roseSector', disc, mat, [0, 0, sz * 0.0062], [0, sz > 0 ? 0 : Math.PI, i * Math.PI / 4]);
+  }
+});
+torus(disc, 'roseRim', 0.117, 0.004, M.brass, [0, 0, 0], null, Math.PI * 2, 48);
+cyl(disc, 'roseHub', 0.016, 0.016, 0.026, M.brass, [0, 0, 0], [Math.PI / 2, 0, 0]);
+for (let i = 0; i < 4; i++)
+  cyl(disc, 'roseSpoke', 0.0035, 0.0035, 0.21, M.brass, [0, 0, 0.0105], [0, 0, i * Math.PI / 4]);
+
+/* ---------- windsock rig ---------- */
+const sock = grp('windsockRig', root);
+sock.position.set(0.42, TOP - 0.004, -0.10);
+cyl(sock, 'sockFoot', 0.030, 0.036, 0.014, M.brass, [0, 0.007, 0]);
+cyl(sock, 'sockMast', 0.008, 0.011, 0.40, M.brass, [0, 0.20, 0]);
+cyl(sock, 'sockMastSleeve', 0.014, 0.014, 0.05, M.brass, [0, 0.09, 0]);
+sph(sock, 'sockMastFinial', 0.012, M.brass, [0, 0.405, 0], 16);
+const arm = grp('sockArm', sock);
+arm.position.set(0, 0.395, 0);
+cyl(arm, 'sockArmTube', 0.005, 0.006, 0.14, M.brass, [0.07, -0.01, 0], [0, 0, -Math.PI / 2 + 0.10]);
+wire(arm, 'sockStay1', [0.0, 0.0, 0], [0.135, -0.028, 0], 0.0016);
+wire(arm, 'sockStay2', [0.0, -0.055, 0], [0.132, -0.026, 0], 0.0016);
+wire(arm, 'sockStay3', [0.0, -0.055, 0], [0.06, -0.018, 0], 0.0016);
+const sockBody = grp('windsock', arm);
+sockBody.position.set(0.140, -0.004, 0);
+sockBody.rotation.z = Math.PI / 2 - 0.12;
+sph(arm, 'sockSwivel', 0.011, M.brass, [0.140, -0.004, 0], 16);
+cyl(arm, 'sockSwivelPin', 0.004, 0.004, 0.026, M.brass, [0.140, -0.004, 0], [0, 0, Math.PI / 2], 12);
+torus(sockBody, 'sockHoop', 0.055, 0.004, M.brass, [0, 0, 0], [Math.PI / 2, 0, 0], Math.PI * 2, 32);
+const bands = [[0.055, 0.052, M.linenPale], [0.052, 0.046, M.linenBlue], [0.046, 0.039, M.linenPale], [0.039, 0.031, M.linenBlue], [0.031, 0.022, M.linenPale], [0.022, 0.012, M.linenBlue]];
+let byy = 0;
+bands.forEach(([r0, r1, mat]) => {
+  const h = 0.055;
+  cyl(sockBody, 'sockBand', r1, r0, h, mat, [0, byy - h / 2, 0], null, 40);
+  byy -= h;
+});
+const plumb = grp('plumb', sock);
+plumb.position.set(0.09, 0.30, 0);
+wire(plumb, 'plumbCord', [0, 0.085, 0], [0, 0, 0], 0.0012);
+cyl(plumb, 'plumbBody', 0.014, 0.016, 0.05, M.brass, [0, -0.025, 0], null, 20);
+cyl(plumb, 'plumbCap', 0.018, 0.018, 0.008, M.iron, [0, 0.002, 0], null, 20);
+sph(plumb, 'plumbTip', 0.009, M.brass, [0, -0.052, 0], 16);
+
+for (let i = 0; i < 3; i++) {
+  const g = grp('weight', root); g.position.set(0.46 + i * 0.045, TOP + 0.008, 0.06);
+  const h = 0.036 - i * 0.006;
+  cyl(g, 'weightBody', 0.014, 0.016, h, M.brass, [0, h / 2, 0], null, 20);
+  cyl(g, 'weightKnob', 0.006, 0.006, 0.010, M.brass, [0, h + 0.005, 0], null, 12);
+}
+
+/* ---------- chart recorder ---------- */
+const chart = grp('chartRecorder', root);
+chart.position.set(0.14, TOP - 0.055, -0.02);
+const chartTex = new BABYLON.DynamicTexture('chartTrace', { width: 1024, height: 256 }, scene, true);
+const chartCtx = chartTex.getContext();
+chartCtx.fillStyle = '#eee7d4'; chartCtx.fillRect(0, 0, 1024, 256);
+const chartMat = new BABYLON.PBRMetallicRoughnessMaterial('chartPaper', scene);
+chartMat.baseTexture = chartTex;
+chartMat.baseColor = hexc(0xffffff);
+chartMat.roughness = 0.95; chartMat.metallic = 0.0;
+chartMat.backFaceCulling = false;
+chartMat.maxSimultaneousLights = 8;
+cyl(chart, 'chartDrum', 0.036, 0.036, 0.24, chartMat, [0, 0, 0], [0, 0, Math.PI / 2], 40);
+for (const sx of [-1, 1]) {
+  cyl(chart, 'chartEndCap', 0.040, 0.040, 0.012, M.brass, [sx * 0.126, 0, 0], [0, 0, Math.PI / 2], 28);
+  cyl(chart, 'chartAxle', 0.008, 0.008, 0.05, M.brass, [sx * 0.155, 0, 0], [0, 0, Math.PI / 2], 16);
+  box(chart, 'chartBracket', 0.014, 0.075, 0.05, M.caseWood, [sx * 0.185, -0.02, 0]);
+}
+const strip = grp('chartPaper', chart);
+const segs = 7;
+for (let i = 0; i < segs; i++) {
+  const t = i / segs, len = 0.036;
+  const ang = 0.55 * Math.max(0, 1 - t * 1.35);
+  const z = 0.036 + t * 0.200;
+  const y = 0.030 - 0.0115 * Math.pow(Math.min(1, t * 1.35), 0.8);   // flattens onto the plank
+  const segMesh = box(strip, 'chartPaperSeg', 0.235, 0.0016, len + 0.002, chartMat, [0, y, z], [ang, 0, 0]);
+  const segMat = chartMat.clone('chartPaperSeg' + i);
+  segMat.baseTexture = chartTex.clone();
+  segMat.baseTexture.uScale = 1; segMat.baseTexture.vScale = 1 / segs;
+  segMat.baseTexture.vOffset = i / segs;
+  segMesh.material = segMat;
+}
+cyl(chart, 'penPost', 0.004, 0.005, 0.09, M.brass, [-0.20, 0.055, 0.10]);
+cyl(chart, 'penArm', 0.0025, 0.0025, 0.13, M.brass, [-0.145, 0.095, 0.10], [0, 0, Math.PI / 2 - 0.15]);
+
+/* ---------- specimen drawers ---------- */
+const drawers = grp('specimenDrawers', root);
+drawers.position.set(-0.20, 0.021, 0.02);
+box(drawers, 'drawerCarcass', 0.30, 0.10, 0.30, M.caseWood, [0, 0.05, 0]);
+const cellMats = [M.linenPale, M.linenRust, M.linenBlue, M.cloud, M.linenPale, M.linenRust];
+let ci = 0;
+for (let r = 0; r < 2; r++) for (let c = 0; c < 3; c++) {
+  const x = -0.10 + c * 0.10, z = -0.10 + r * 0.10;
+  box(drawers, 'drawerBox', 0.088, 0.062, 0.088, M.paleWood, [x, 0.085, z]);
+  box(drawers, 'drawerWell', 0.072, 0.010, 0.072, cellMats[ci++ % cellMats.length], [x, 0.104, z]);
+  sph(drawers, 'drawerKnob', 0.007, M.brass, [x, 0.086, z + 0.048], 14);
+}
+box(drawers, 'drawerDivider', 0.30, 0.075, 0.006, M.caseWood, [0, 0.093, 0.148]);
+
+/* ---------- fog chamber ---------- */
+const frostMat = new BABYLON.StandardMaterial('frostedGlass', scene);
+frostMat.emissiveColor = new BABYLON.Color3(0.78, 0.77, 0.74);
+frostMat.diffuseColor = new BABYLON.Color3(0, 0, 0);
+frostMat.specularColor = new BABYLON.Color3(0.06, 0.06, 0.06);
+frostMat.disableLighting = true;
+frostMat.backFaceCulling = false;
+frostMat.alpha = 0.085;
+const puffCanvas = document.createElement('canvas');
+puffCanvas.width = puffCanvas.height = 64;
+{
+  const pctx = puffCanvas.getContext('2d');
+  const pg = pctx.createRadialGradient(32, 32, 0, 32, 32, 32);
+  pg.addColorStop(0, 'rgba(255,255,255,0.9)');
+  pg.addColorStop(0.45, 'rgba(248,247,242,0.45)');
+  pg.addColorStop(1, 'rgba(248,247,242,0)');
+  pctx.fillStyle = pg; pctx.fillRect(0, 0, 64, 64);
+}
+const puffURL = puffCanvas.toDataURL();
+
+const FW = 0.205, FH = 0.130, FD = 0.165;
+const fogRoom = grp('fogChamber', root);
+fogRoom.position.set(-0.525, TOP + 0.006, -0.035);
+box(fogRoom, 'fogTray', FW + 0.014, 0.010, FD + 0.014, M.brass, [0, 0.005, 0]);
+box(fogRoom, 'fogGlassFront', FW - 0.016, FH - 0.014, 0.003, frostMat, [0, FH / 2 + 0.010, FD / 2 - 0.003]);
+box(fogRoom, 'fogGlassBack', FW - 0.016, FH - 0.014, 0.003, frostMat, [0, FH / 2 + 0.010, -FD / 2 + 0.003]);
+box(fogRoom, 'fogGlassLeft', 0.003, FH - 0.014, FD - 0.016, frostMat, [-FW / 2 + 0.003, FH / 2 + 0.010, 0]);
+box(fogRoom, 'fogGlassRight', 0.003, FH - 0.014, FD - 0.016, frostMat, [FW / 2 - 0.003, FH / 2 + 0.010, 0]);
+box(fogRoom, 'fogGlassTop', FW - 0.016, 0.003, FD - 0.016, frostMat, [0, FH + 0.010, 0]);
+for (const sx of [-1, 1]) for (const sz of [-1, 1]) {
+  cyl(fogRoom, 'fogCornerPost', 0.005, 0.005, FH + 0.006, M.brass, [sx * (FW / 2 - 0.004), FH / 2 + 0.012, sz * (FD / 2 - 0.004)], null, 10);
+  sph(fogRoom, 'fogFinial', 0.007, M.brass, [sx * (FW / 2 - 0.004), FH + 0.018, sz * (FD / 2 - 0.004)], 12);
+}
+for (const y of [0.012, FH + 0.010]) {
+  for (const sz of [-1, 1]) box(fogRoom, 'fogRailX', FW - 0.008, 0.006, 0.006, M.brass, [0, y, sz * (FD / 2 - 0.004)]);
+  for (const sx of [-1, 1]) box(fogRoom, 'fogRailZ', 0.006, 0.006, FD - 0.008, M.brass, [sx * (FW / 2 - 0.004), y, 0]);
+}
+// glass neither shades the sand nor drops its own shadow on it
+for (const m of fogRoom.getChildMeshes()) {
+  if (!/glass/i.test(m.name)) continue;
+  noCast(m);
+  m.receiveShadows = false;
+  const gm = new BABYLON.StandardMaterial('chamberPane', scene);
+  gm.emissiveColor = new BABYLON.Color3(0.72, 0.72, 0.70);
+  gm.diffuseColor = new BABYLON.Color3(0, 0, 0);
+  gm.specularColor = new BABYLON.Color3(0.05, 0.05, 0.05);
+  gm.disableLighting = true;
+  gm.backFaceCulling = false;
+  gm.alpha = 0.055;
+  m.material = gm;
+}
+// desert floor: warm sand, ripples running across long crescent dunes
+const chamberSandTex = new BABYLON.DynamicTexture('chamberSand', { width: 512, height: 512 }, scene, true);
+{
+  const c = chamberSandTex.getContext();
+  c.fillStyle = '#d8bd92'; c.fillRect(0, 0, 512, 512);
+  // wide, very soft wind bands — tight stripes moiré into planks at this scale
+  for (let i = 0; i < 512; i += 26) {
+    const g = c.createLinearGradient(0, i, 0, i + 26);
+    g.addColorStop(0, 'rgba(168,138,98,0.00)');
+    g.addColorStop(0.5, 'rgba(168,138,98,0.10)');
+    g.addColorStop(1, 'rgba(168,138,98,0.00)');
+    c.fillStyle = g;
+    c.fillRect(0, i + Math.sin(i * 0.05) * 6, 512, 26);
+  }
+  for (let i = 0; i < 5200; i++) {
+    c.fillStyle = 'rgba(150,122,86,' + (0.04 + Math.random() * 0.10).toFixed(3) + ')';
+    c.fillRect(Math.random() * 512, Math.random() * 512, 2, 2);
+  }
+  chamberSandTex.update(false);
+  chamberSandTex.uScale = 2; chamberSandTex.vScale = 2;
+  chamberSandTex.anisotropicFilteringLevel = 8;
+}
+// sand lit by its own texture: under the glass, with the scene's light budget spent
+// elsewhere, a shaded material kept reading as grey slate
+const desertMat = new BABYLON.StandardMaterial('desertSand', scene);
+desertMat.diffuseTexture = chamberSandTex;
+desertMat.emissiveTexture = chamberSandTex;
+desertMat.emissiveColor = new BABYLON.Color3(1.0, 0.94, 0.82);
+desertMat.diffuseColor = new BABYLON.Color3(0.62, 0.55, 0.42);
+desertMat.specularColor = new BABYLON.Color3(0.02, 0.02, 0.02);
+desertMat.backFaceCulling = false;
+desertMat.maxSimultaneousLights = 6;
+// low crescent dunes with fine ripples running across them — no hard crests
+const chamberDune = (x, y) =>
+  0.0090 * Math.sin(x * 9.5 + 0.4) * (0.55 + 0.45 * Math.cos(y * 7.5 + 1.0)) +
+  0.0060 * Math.sin(y * 8.5 - 0.9) * (0.60 + 0.40 * Math.sin(x * 5.5)) +
+  0.0034 * Math.sin(x * 21 + 0.5) * (0.60 + 0.40 * Math.cos(y * 13 + 1.0)) +
+  0.0026 * Math.sin(y * 17 - 0.9) +
+  0.0009 * Math.sin((x + y) * 58) +
+  0.0006 * Math.sin((x * 0.8 - y) * 132) +
+  0.0004 * Math.sin((x * 1.6 + y * 0.7) * 240);
+// a ground mesh: already in XZ with skyward normals, so nothing has to be flipped
+const dune = BABYLON.MeshBuilder.CreateGround('desertFloor',
+  { width: FW - 0.014, height: FD - 0.014, subdivisions: 80, updatable: true }, scene);
+{
+  dune.parent = fogRoom;
+  dune.position.set(0, 0.019, 0);
+  dune.material = desertMat;
+  dune.isPickable = false;
+  dune.receiveShadows = false;
+  const p = dune.getVerticesData(BABYLON.VertexBuffer.PositionKind);
+  for (let i = 0; i < p.length; i += 3) p[i + 1] = chamberDune(p[i], p[i + 2]);
+  dune.updateVerticesData(BABYLON.VertexBuffer.PositionKind, p);
+  const nrm = [];
+  BABYLON.VertexData.ComputeNormals(p, dune.getIndices(), nrm);
+  dune.updateVerticesData(BABYLON.VertexBuffer.NormalKind, nrm);
+  dune.refreshBoundingInfo();
+}
+// a skirt of sand closes the floor's cut edges
+{
+  const sw = FW - 0.014, sd = FD - 0.014, sh = 0.030;
+  for (const [w, d, x, z] of [[sw, 0.008, 0, -sd / 2], [sw, 0.008, 0, sd / 2], [0.008, sd, -sw / 2, 0], [0.008, sd, sw / 2, 0]]) {
+    const m = BABYLON.MeshBuilder.CreateBox('sandSkirt', { width: w, height: sh, depth: d }, scene);
+    m.parent = fogRoom; m.material = desertMat;
+    m.position.set(x, 0.019 - sh / 2 + 0.004, z);
+    m.isPickable = false; m.receiveShadows = false; noCast(m);
+  }
+}
+// the chamber keeps its own daylight, so the sand is not lost in the trunk's shadow
+const chamberSun = new BABYLON.PointLight('chamberSun', V3(0, 0.10, 0.02), scene);
+chamberSun.parent = fogRoom;
+chamberSun.diffuse = hexc(0xfff0d8);
+chamberSun.range = 0.26; chamberSun.intensity = 0.042;
+// wind-carved ridges and a scatter of pebbles, so the floor reads as desert
+const pebbleMat = pbr('desertPebble', 0x9c8464, 0.95, 0.02);
+for (let i = 0; i < 9; i++) {
+  const x = (Math.random() - 0.5) * (FW - 0.05), z = (Math.random() - 0.5) * (FD - 0.05);
+  const s = 0.0018 + Math.random() * 0.0026;
+  const m = BABYLON.MeshBuilder.CreatePolyhedron('desertPebble', { type: 2, size: s }, scene);
+  finish(m, 'desertPebble', fogRoom, pebbleMat, [x, 0.013 + chamberDune(x, -z) + s * 0.4, z],
+    [Math.random() * 3, Math.random() * 3, Math.random() * 3]);
+  noCast(m); m.receiveShadows = false;
+}
+// (no ridge slabs — the displaced dunes carry the relief)
+
+/* ---------- the lost boat ---------- */
+const hullMat = pbr('hull', 0x1a1813, 0.62, 0.18, { double: true });
+const sailMat = pbr('furledSail', 0xa79c86, 0.95, 0.0);
+const rigMat = pbr('rigging', 0x9c937d, 0.95, 0.0);
+const cabinLampMat = pbr('cabinLamp', 0xffd79a, 0.4, 0.0, { emissive: 0xff9a2e, emissiveIntensity: 3.2 });
+const boat = grp('lostBoat', fogRoom);
+boat.position.set(0, 0.020, 0);
+boat.scaling.setAll(0.85);
+
+const HL = 0.070, HB = 0.0115, HD = 0.0105, HS = 0.0070;
+const NU = 34, NT = 22;
+{
+  const hv = [], hidx = [];
+  for (let i = 0; i <= NU; i++) {
+    const u = -1 + 2 * i / NU;
+    const taper = Math.pow(Math.max(0, 1 - u * u), 0.42) * (u > 0 ? Math.pow(1 - u * 0.55, 0.8) : 1);
+    const B = HB * taper + 0.0006;
+    const D = HD * (1 - 0.34 * u * u) * (u > 0.86 ? (1 - (u - 0.86) * 5) : 1);
+    const S = HS * (0.30 + 0.70 * u * u * (u > 0 ? 1.25 : 1));
+    for (let j = 0; j <= NT; j++) {
+      const th = -Math.PI / 2 + Math.PI * j / NT;
+      const st = Math.sin(th), ct = Math.cos(th);
+      hv.push(u * HL / 2, S * Math.pow(Math.abs(st), 1.5) - D * Math.pow(ct, 1.25), B * st);
+    }
+  }
+  for (let i = 0; i < NU; i++) for (let j = 0; j < NT; j++) {
+    const a = i * (NT + 1) + j, b = a + 1, c = a + (NT + 1), d = c + 1;
+    hidx.push(a, c, b, b, c, d);
+  }
+  const vd = new BABYLON.VertexData();
+  vd.positions = hv; vd.indices = hidx; vd.normals = [];
+  BABYLON.VertexData.ComputeNormals(hv, hidx, vd.normals);
+  const m = new BABYLON.Mesh('boatHull', scene);
+  vd.applyToMesh(m);
+  noCast(finish(m, 'boatHull', boat, hullMat, [0, 0.010, 0]));
+}
+for (const sz of [-1, 1]) {
+  const gv = [], gi = [];
+  for (let i = 0; i <= NU; i++) {
+    const u = -1 + 2 * i / NU;
+    const taper = Math.pow(Math.max(0, 1 - u * u), 0.42) * (u > 0 ? Math.pow(1 - u * 0.55, 0.8) : 1);
+    const B = HB * taper + 0.0006;
+    const S = HS * (0.30 + 0.70 * u * u * (u > 0 ? 1.25 : 1));
+    gv.push(u * HL / 2, S, sz * B, u * HL / 2, S + 0.0016, sz * (B - 0.0008));
+  }
+  for (let i = 0; i < NU; i++) { const a = i * 2; gi.push(a, a + 2, a + 1, a + 1, a + 2, a + 3); }
+  const vd = new BABYLON.VertexData();
+  vd.positions = gv; vd.indices = gi; vd.normals = [];
+  BABYLON.VertexData.ComputeNormals(gv, gi, vd.normals);
+  const m = new BABYLON.Mesh('boatGunwale', scene);
+  vd.applyToMesh(m);
+  finish(m, 'boatGunwale', boat, hullMat, [0, 0.010, 0]);
+}
+box(boat, 'boatTransom', 0.0030, 0.014, 0.019, hullMat, [-HL / 2 + 0.001, 0.011, 0]);
+box(boat, 'boatThwart', 0.009, 0.0020, 0.019, hullMat, [-0.006, 0.016, 0]);
+box(boat, 'boatFordeck', 0.016, 0.0020, 0.014, hullMat, [0.021, 0.016, 0], [0, 0, 0.04]);
+box(boat, 'boatRudder', 0.0030, 0.016, 0.0022, hullMat, [-0.036, 0.004, 0], [0, 0, 0.10]);
+cyl(boat, 'boatTiller', 0.0007, 0.0009, 0.016, hullMat, [-0.029, 0.017, 0], [0, 0, Math.PI / 2 - 0.22], 6);
+cyl(boat, 'boatMast', 0.0008, 0.0013, 0.100, hullMat, [0.008, 0.065, 0], null, 10);
+cyl(boat, 'boatBoom', 0.0007, 0.0008, 0.032, hullMat, [-0.008, 0.024, 0], [0, 0, Math.PI / 2 - 0.08], 6);
+sph(boat, 'boatTruck', 0.0016, hullMat, [0.008, 0.115, 0], 10);
+noCast(cyl(boat, 'boatFurledSail', 0.0016, 0.0034, 0.030, sailMat, [-0.008, 0.0255, 0], [0, 0, Math.PI / 2 - 0.08], 10));
+wire(boat, 'boatForestay', [0.008, 0.113, 0], [0.033, 0.018, 0], 0.00045, rigMat);
+wire(boat, 'boatBackstay', [0.008, 0.113, 0], [-0.033, 0.017, 0], 0.00045, rigMat);
+wire(boat, 'boatShroudL', [0.008, 0.098, 0], [0.004, 0.017, 0.010], 0.00045, rigMat);
+wire(boat, 'boatShroudR', [0.008, 0.098, 0], [0.004, 0.017, -0.010], 0.00045, rigMat);
+wire(boat, 'boatHalyard', [0.008, 0.104, 0], [-0.020, 0.026, 0], 0.00045, rigMat);
+sph(boat, 'boatLamp', 0.0032, cabinLampMat, [-0.004, 0.014, 0], 10);
+const boatLight = new BABYLON.PointLight('boatLight', V3(0, 0, 0), scene);
+boatLight.parent = boat; boatLight.position.set(-0.004, 0.016, 0);
+boatLight.diffuse = hexc(0xff9a3c); boatLight.range = 0.13; boatLight.intensity = 0.09;
+
+/* ---------- the keeper's lantern ---------- */
+const flameMat = pbr('lanternFlame', 0xfff1cd, 0.4, 0.0, { emissive: 0xffb257, emissiveIntensity: 1.8 });
+const lantern = grp('lantern', root);
+lantern.position.set(-0.395, TOP + 0.006, 0.055);
+cyl(lantern, 'lanternFoot', 0.016, 0.019, 0.008, M.brass, [0, 0.004, 0], null, 18);
+cyl(lantern, 'lanternFlue', 0.013, 0.013, 0.026, flameMat, [0, 0.021, 0], null, 18);
+for (let i = 0; i < 4; i++)
+  cyl(lantern, 'lanternBar', 0.0022, 0.0022, 0.028, M.brass, [Math.cos(i * Math.PI / 2) * 0.0125, 0.021, Math.sin(i * Math.PI / 2) * 0.0125], null, 6);
+cone(lantern, 'lanternCapTop', 0.020, 0.014, M.brass, [0, 0.041, 0], null, 18);
+torus(lantern, 'lanternBail', 0.010, 0.0018, M.brass, [0, 0.050, 0], [0, Math.PI / 2, 0], Math.PI, 18);
+const lanternLight = new BABYLON.PointLight('lanternLight', V3(0, 0.022, 0), scene);
+lanternLight.parent = lantern;
+lanternLight.diffuse = hexc(0xffbb63); lanternLight.range = 0.34; lanternLight.intensity = 0.14;
+
+/* ---------- guy wires and outrigger ---------- */
+wire(root, 'guyHornL', [-0.27, TOP + 0.19, -0.14], [-0.185, TOP + 0.010, 0.120], 0.0013);
+wire(root, 'guyHornF', [-0.27, TOP + 0.19, -0.14], [-0.115, TOP + 0.010, 0.155], 0.0013);
+wire(root, 'guySockR', [0.42, TOP + 0.30, -0.10], [0.64, TOP + 0.008, 0.06], 0.0013);
+wire(root, 'guySockF', [0.42, TOP + 0.36, -0.10], [0.34, TOP + 0.012, 0.16], 0.0013);
+wire(root, 'guyRoseL', [0.23, TOP + 0.14, -0.14], [0.06, TOP + 0.014, 0.02], 0.0013);
+for (const [x, z] of [[-0.185, 0.120], [-0.115, 0.155], [0.64, 0.06], [0.34, 0.16]])
+  cyl(root, 'tensioner', 0.006, 0.008, 0.03, M.brass, [x, TOP + 0.008, z], null, 14);
+box(root, 'outriggerBracket', 0.020, 0.030, 0.024, M.brass, [0.62, TOP + 0.020, 0.10]);
+cyl(root, 'outriggerRod', 0.004, 0.004, 0.16, M.brass, [0.695, TOP + 0.038, 0.10], [0, 0, Math.PI / 2 - 0.16], 14);
+sph(root, 'outriggerTip', 0.009, M.brass, [0.775, TOP + 0.051, 0.10], 16);
+
+/* ---------- the sea drawer ---------- */
+const waterMat = new BABYLON.StandardMaterial('drawerWater', scene);
+waterMat.diffuseColor = hexc(0x46536b);
+waterMat.specularColor = new BABYLON.Color3(1, 1, 0.94);
+waterMat.specularPower = 96;
+waterMat.emissiveColor = hexc(0x1d2534);
+waterMat.backFaceCulling = false;
+waterMat.twoSidedLighting = true;
+waterMat.maxSimultaneousLights = 6;
+const wd = grp('seaDrawer', root);
+wd.position.set(0.11, 0.062, 0);
+box(wd, 'drawerFrontPanel', 0.300, 0.064, 0.016, M.caseWood, [0, 0, 0.332]);
+box(wd, 'drawerSideL', 0.014, 0.052, 0.200, M.caseWood, [-0.143, -0.004, 0.224]);
+box(wd, 'drawerSideR', 0.014, 0.052, 0.200, M.caseWood, [0.143, -0.004, 0.224]);
+box(wd, 'drawerBack', 0.300, 0.052, 0.014, M.caseWood, [0, -0.004, 0.127]);
+box(wd, 'drawerBottom', 0.272, 0.010, 0.190, M.caseWood, [0, -0.025, 0.229]);
+box(wd, 'drawerLiner', 0.270, 0.004, 0.188, M.lining, [0, -0.019, 0.229]);
+for (const sx of [-1, 1]) cyl(wd, 'drawerHandlePost', 0.0045, 0.0045, 0.016, M.brass, [sx * 0.045, 0, 0.344], [Math.PI / 2, 0, 0], 14);
+torus(wd, 'drawerHandleBow', 0.045, 0.0055, M.brass, [0, 0, 0.352], [0, 0, Math.PI], Math.PI, 30);
+cyl(wd, 'drawerKeyhole', 0.010, 0.010, 0.010, M.brass, [0, 0.020, 0.338], [Math.PI / 2, 0, 0], 20);
+const W = planeMesh(wd, 'drawerSea', 0.272, 0.190, 40, 28, waterMat, [0, -0.010, 0.229], [-Math.PI / 2, 0, 0], true);
+noCast(W.mesh);
+
+// a plank laid across the case over the sea drawer
+const plankOverMat = pbr('drawerPlank', 0xb9a382, 0.88, 0.02);
+box(root, 'drawerCoverPlank', 0.318, 0.012, 0.088, plankOverMat, [0.110, 0.1465, 0.170]);
+box(root, 'drawerCoverCleatL', 0.020, 0.014, 0.092, M.caseWood, [-0.041, 0.1385, 0.170]);
+box(root, 'drawerCoverCleatR', 0.020, 0.014, 0.092, M.caseWood, [0.261, 0.1385, 0.170]);
+
+/* ---------- centre on origin, base at y = 0 ---------- */
+root.computeWorldMatrix(true);
+let bmin = V3(1e9, 1e9, 1e9), bmax = V3(-1e9, -1e9, -1e9);
+for (const m of root.getChildMeshes()) {
+  m.computeWorldMatrix(true);
+  const bb = m.getBoundingInfo().boundingBox;
+  bmin = BABYLON.Vector3.Minimize(bmin, bb.minimumWorld);
+  bmax = BABYLON.Vector3.Maximize(bmax, bb.maximumWorld);
+}
+const ctr = bmin.add(bmax).scale(0.5);
+root.position.set(-ctr.x, -bmin.y, -ctr.z);
+root.computeWorldMatrix(true);
+const objCenter = V3(0, (bmax.y - bmin.y) / 2, 0);
+const objRadius = bmax.subtract(bmin).length() / 2;
+
+/* ---------- camera, framed exactly like the three.js stage ---------- */
+const camera = new BABYLON.ArcRotateCamera('cam', 0, 1, 1, objCenter, scene);
+camera.fov = 45 * Math.PI / 180;
+camera.minZ = 0.01; camera.maxZ = 500;
+camera.wheelPrecision = 120;
+camera.panningSensibility = 2400;
+camera.lowerRadiusLimit = 0.3;
+camera.upperRadiusLimit = 12;
+{
+  const dist = (objRadius / Math.tan(camera.fov / 2)) * 1.35;
+  const dir = V3(1, 0.55, 1.25).normalize();
+  camera.setPosition(objCenter.add(dir.scale(dist)));
+}
+camera.attachControl(canvas, true);
+camera.useAutoRotationBehavior = false;
+
+/* ---------- the plank the trunk stands on ---------- */
+const plankMat = pbr('plank', 0x584130, 0.9, 0.03);
+const plank = BABYLON.MeshBuilder.CreateBox('plank', { width: 1.34, height: 0.06, depth: 0.92 }, scene);
+plank.material = plankMat; plank.position.set(0, -0.031, 0.02); plank.receiveShadows = true;
+casters.push(plank);
+const legs = [];
+for (const sx of [-1, 1]) for (const sz of [-1, 1]) {
+  const leg = BABYLON.MeshBuilder.CreateBox('leg', { width: 0.07, height: 0.44, depth: 0.07 }, scene);
+  leg.material = plankMat; leg.position.set(sx * 0.58, -0.28, 0.02 + sz * 0.38);
+  casters.push(leg); legs.push(leg);
+}
+
+/* ---------- the sea behind the raised lid ---------- */
+const seaScape = grp('seaScape');
+const seaMat = pbr('sea', 0x5b6880, 0.28, 0.18, { double: true });
+const SEG = 72, SPAN = 260;
+const S_ = planeMesh(seaScape, 'sea', SPAN, SPAN, SEG, SEG, seaMat, [0, -0.62, -95], [-Math.PI / 2, 0, 0], true);
+noCast(S_.mesh);
+S_.mesh.receiveShadows = false;
+
+const rockMat = pbr('rock', 0x4a463d, 0.95, 0.02);
+const sandMat = pbr('sand', 0x8d8371, 0.98, 0.0);
+const towerMat = pbr('tower', 0xe8e0cb, 0.8, 0.02);
+const capMat = pbr('towerCap', 0x231f1b, 0.55, 0.3);
+const lampMat = pbr('lamp', 0xfff0cd, 0.3, 0.0, { emissive: 0xffd694, emissiveIntensity: 2.4 });
+
+const island = grp('island', seaScape);
+island.position.set(-5.2, -0.62, -46); island.scaling.setAll(0.27);
+const shorePts = [];
+for (let i = 0; i <= 14; i++) { const t = i / 14; shorePts.push([9.4 * (1 - Math.pow(t, 1.7)), 3.4 * Math.pow(t, 0.85)]); }
+lathe(island, 'islandRock', shorePts, 40, rockMat, [0, 0, 0]);
+cyl(island, 'islandShoal', 11.4, 12.6, 0.5, sandMat, [0, 0.1, 0], null, 40);
+for (const [x, z, s] of [[5.4, 3.0, 1.5], [-4.8, 4.2, 1.1], [3.2, -5.6, 0.9], [-6.2, -2.4, 1.3]]) {
+  const r = BABYLON.MeshBuilder.CreatePolyhedron('shoreRock', { type: 2, size: s }, scene);
+  finish(r, 'shoreRock', island, rockMat, [x, 0.3, z], [Math.random(), Math.random(), Math.random()]);
+}
+const house = grp('keepersCottage', island);
+house.position.set(4.0, 1.7, 2.4); house.scaling.setAll(0.7);
+box(house, 'cottageWalls', 3.6, 2.2, 2.6, towerMat, [0, 1.1, 0]);
+cyl(house, 'cottageRoof', 0.01, 2.1, 1.3, capMat, [0, 2.85, 0], [0, Math.PI / 4, 0], 4);
+cyl(house, 'cottageChimney', 0.22, 0.24, 1.0, capMat, [1.2, 3.0, 0.6], null, 12);
+
+const tower = grp('lighthouse', island);
+tower.position.set(-0.4, 2.55, -0.3); tower.scaling.setAll(0.66);
+cyl(tower, 'towerPlinth', 3.0, 3.4, 1.1, rockMat, [0, 0.55, 0], null, 32);
+cyl(tower, 'towerShaft', 1.55, 2.45, 9.2, towerMat, [0, 5.7, 0], null, 40);
+torus(tower, 'towerGalleryRail', 1.9, 0.16, capMat, [0, 10.9, 0], [Math.PI / 2, 0, 0], Math.PI * 2, 36);
+cyl(tower, 'towerGalleryFloor', 2.1, 2.1, 0.24, capMat, [0, 10.4, 0], null, 36);
+cyl(tower, 'lanternGlass', 1.45, 1.45, 2.3, M.glass, [0, 11.7, 0], null, 32);
+for (let i = 0; i < 6; i++)
+  cyl(tower, 'lanternMullion', 0.09, 0.09, 2.3, capMat, [Math.cos(i * Math.PI / 3) * 1.44, 11.7, Math.sin(i * Math.PI / 3) * 1.44], null, 8);
+sph(tower, 'lampGlow', 0.34, lampMat, [0, 11.6, 0], 20);
+// the lamp room itself, so there is something to stand in: deck, pedestal,
+// a rotating Fresnel drum, a rail at the glass and the gallery outside it
+const lampFloorMat = pbr('lampFloor', 0x2b2620, 0.85, 0.15);
+const lensMat = pbr('lensPrism', 0xdce8ea, 0.10, 0.05, { alpha: 0.44, double: true, noDepth: true });
+cyl(tower, 'lampDeck', 1.42, 1.42, 0.16, lampFloorMat, [0, 10.62, 0], null, 32);
+for (let i = 0; i < 12; i++)
+  box(tower, 'lampDeckPlank', 2.70, 0.03, 0.16, capMat, [0, 10.70, 0], [0, i * Math.PI / 12, 0]);
+cyl(tower, 'lensPedestal', 0.44, 0.58, 0.62, capMat, [0, 11.01, 0], null, 24);
+cyl(tower, 'lensPedestalRing', 0.62, 0.62, 0.09, M.brass, [0, 11.30, 0], null, 28);
+for (let i = 0; i < 3; i++)
+  cyl(tower, 'lampRailRing', 1.30, 1.30, 0.05, M.brass, [0, 10.86 + i * 0.30, 0], null, 28);
+for (let i = 0; i < 8; i++)
+  cyl(tower, 'lampRailPost', 0.045, 0.045, 0.66, M.brass,
+    [Math.cos(i * Math.PI / 4) * 1.30, 11.05, Math.sin(i * Math.PI / 4) * 1.30], null, 10);
+for (const ry of [11.28, 10.94, 10.66])
+  torus(tower, 'galleryRail', 2.03, 0.055, capMat, [0, ry, 0], [Math.PI / 2, 0, 0], Math.PI * 2, 40);
+for (let i = 0; i < 20; i++)
+  cyl(tower, 'galleryBaluster', 0.040, 0.040, 0.80, capMat,
+    [Math.cos(i * Math.PI / 10) * 2.03, 10.90, Math.sin(i * Math.PI / 10) * 2.03], null, 8);
+cyl(tower, 'lampVentHood', 0.30, 0.46, 0.40, capMat, [0, 12.98, 0], null, 20);
+const lens = grp('fresnelLens', tower);
+lens.position.set(0, 11.60, 0);
+for (const [ry, rr, hh] of [[-0.52, 0.68, 0.24], [-0.25, 0.78, 0.28], [0.05, 0.78, 0.28], [0.33, 0.68, 0.24], [0.56, 0.50, 0.18]])
+  noCast(cyl(lens, 'lensRing', rr, rr, hh, lensMat, [0, ry, 0], null, 28));
+for (let i = 0; i < 16; i++)
+  cyl(lens, 'lensAstragal', 0.024, 0.024, 1.40, M.brass,
+    [Math.cos(i * Math.PI / 8) * 0.79, 0, Math.sin(i * Math.PI / 8) * 0.79], null, 8);
+for (const dy of [-0.70, 0.70]) cyl(lens, 'lensCap', 0.58, 0.58, 0.06, M.brass, [0, dy, 0], null, 28);
+cone(tower, 'lanternCap', 1.85, 1.7, capMat, [0, 13.7, 0], null, 32);
+sph(tower, 'capFinial', 0.20, capMat, [0, 14.7, 0], 12);
+for (let i = 0; i < 4; i++)
+  cyl(tower, 'towerWindow', 0.26, 0.26, 0.5, capMat, [0, 3.0 + i * 2.0, 2.0 - i * 0.10], [Math.PI / 2, 0, 0], 14);
+
+// the sweeping beam
+const beamGradTex = new BABYLON.DynamicTexture('beamGrad', { width: 4, height: 64 }, scene, false);
+{
+  const g = beamGradTex.getContext();
+  const lg = g.createLinearGradient(0, 0, 0, 64);
+  lg.addColorStop(0, '#dcdcdc'); lg.addColorStop(0.40, '#6a6a6a'); lg.addColorStop(1, '#0d0d0d');
+  g.fillStyle = lg; g.fillRect(0, 0, 4, 64);
+  beamGradTex.update(false);
+}
+// vertex alpha carries the fade: opaque at the lens, gone at the far end
+const beamGrad = (m, len) => {
+  const p = m.getVerticesData(BABYLON.VertexBuffer.PositionKind);
+  const col = new Float32Array((p.length / 3) * 4);
+  for (let i = 0; i < p.length / 3; i++) {
+    const t = (p[i * 3 + 1] + len / 2) / len;          // 1 at the lens, 0 far away
+    const a = Math.pow(t, 2.8);
+    col[i * 4] = 1; col[i * 4 + 1] = 1; col[i * 4 + 2] = 1; col[i * 4 + 3] = a;
+  }
+  m.setVerticesData(BABYLON.VertexBuffer.ColorKind, col, false, 4);
+  m.useVertexColors = true;
+  m.hasVertexAlpha = true;
+};
+const beamMat = new BABYLON.StandardMaterial('beam', scene);
+beamMat.emissiveColor = hexc(0xffc46a);
+beamMat.diffuseColor = new BABYLON.Color3(0, 0, 0);
+beamMat.specularColor = new BABYLON.Color3(0, 0, 0);
+beamMat.alphaMode = BABYLON.Engine.ALPHA_ADD;
+beamMat.disableLighting = true;
+beamMat.backFaceCulling = false;
+beamMat.disableDepthWrite = true;
+beamMat.fogEnabled = false;
+beamMat.alpha = 0.22;
+beamMat.depthFunction = BABYLON.Engine.ALWAYS;   // a light is not occluded by glass or rail
+const conPanelMat = pbr('consolePanel', 0x2b2620, 0.75, 0.15);
+const consoleG = grp('lampConsole', tower);
+consoleG.position.set(-0.170, 10.70, -1.168);
+consoleG.rotation.y = -0.145;
+cyl(consoleG, 'consolePost', 0.145, 0.195, 0.50, capMat, [0, 0.25, 0], null, 20);
+cyl(consoleG, 'consoleCollar', 0.205, 0.205, 0.05, M.brass, [0, 0.49, 0], null, 22);
+box(consoleG, 'consolePanel', 0.46, 0.05, 0.32, conPanelMat, [0, 0.575, 0.02], [-0.42, 0, 0]);
+box(consoleG, 'consolePanelRim', 0.49, 0.02, 0.35, M.brass, [0, 0.558, 0.02], [-0.42, 0, 0]);
+for (const sx of [-1, 1]) box(consoleG, 'consolePlate', 0.14, 0.012, 0.05, M.brass, [sx * 0.12, 0.612, -0.09], [-0.42, 0, 0]);
+// the reach lever
+const reachLever = grp('reachLever', consoleG);
+reachLever.position.set(-0.125, 0.60, 0.03);
+const reachParts = [
+  box(reachLever, 'reachArm', 0.045, 0.30, 0.045, M.brass, [0, 0.14, 0]),
+  sph(reachLever, 'reachKnob', 0.048, capMat, [0, 0.30, 0], 14),
+];
+cyl(consoleG, 'reachGate', 0.030, 0.030, 0.10, M.brass, [-0.125, 0.60, 0.03], [Math.PI / 2, 0, 0], 14);
+// the sweep wheel
+const speedWheel = grp('speedWheel', consoleG);
+speedWheel.position.set(0.135, 0.615, 0.03);
+speedWheel.rotation.x = -0.42;
+const speedParts = [torus(speedWheel, 'wheelRim', 0.105, 0.016, M.brass, [0, 0, 0], null, Math.PI * 2, 24)];
+for (let i = 0; i < 5; i++)
+  speedParts.push(cyl(speedWheel, 'wheelSpoke', 0.010, 0.010, 0.20, M.brass, [0, 0, 0], [0, 0, i * Math.PI / 5], 8));
+speedParts.push(cyl(speedWheel, 'wheelHub', 0.030, 0.030, 0.05, capMat, [0, 0, 0], [Math.PI / 2, 0, 0], 14));
+const beamCoreMat = new BABYLON.StandardMaterial('beamCore', scene);
+beamCoreMat.emissiveColor = hexc(0xffe9c2);
+beamCoreMat.diffuseColor = new BABYLON.Color3(0, 0, 0);
+beamCoreMat.specularColor = new BABYLON.Color3(0, 0, 0);
+beamCoreMat.disableLighting = true;
+beamCoreMat.alphaMode = BABYLON.Engine.ALPHA_ADD;
+beamCoreMat.disableDepthWrite = true;
+beamCoreMat.backFaceCulling = false;
+beamCoreMat.fogEnabled = false;
+beamCoreMat.alpha = 0.30;
+beamCoreMat.depthFunction = BABYLON.Engine.ALWAYS;
+const beamCtl = { reach: 0.55, speed: 0.34, rN: 0.55, sN: 0.34 };
+const beacon = grp('beacon', tower);
+beacon.position.set(0, 11.6, 0);
+const BEAM_NEAR = 2.2, BEAM_LEN = 58;
+const beamCones = [];
+for (const dir of [1, -1]) {
+  const beam = BABYLON.MeshBuilder.CreateCylinder('beamCone', {
+    diameterTop: 2.6, diameterBottom: 13, height: BEAM_LEN, tessellation: 24,
+    cap: BABYLON.Mesh.CAP_ALL, sideOrientation: BABYLON.Mesh.DOUBLESIDE }, scene);
+  beam.parent = beacon;
+  beam.material = beamMat.clone('beamMat' + beamCones.length);
+  beam.position.set(dir * (BEAM_NEAR + BEAM_LEN / 2), 0, 0);
+  beam.rotationQuaternion = BABYLON.Quaternion.RotationYawPitchRoll(0, 0.02, dir * Math.PI / 2);
+  beam.isPickable = false;
+  beamGrad(beam, BEAM_LEN);
+  beamCones.push(beam);
+}
+for (const b of beamCones) b.alwaysSelectAsActiveMesh = true;   // a 200-unit cone must not be frustum-culled
+const beamAx = new BABYLON.Vector3(), beamVd = new BABYLON.Vector3();
+const fadeBeams = (list, base) => {
+  const cam = scene.activeCamera;
+  // a beam only shows when it crosses the view; looking along it there is nothing to see
+  beamVd.copyFrom(cam.getTarget()).subtractInPlace(cam.position).normalize();
+  for (const b of list) {
+    b.computeWorldMatrix(true);
+    const m = b.getWorldMatrix().m;
+    beamAx.set(m[4], m[5], m[6]).normalize();
+    const side = 1 - Math.abs(BABYLON.Vector3.Dot(beamAx, beamVd));
+    const u = Math.max(0, Math.min(1, (side - 0.02) / 0.30));
+    const lift = 1.6 + 1.8 * skyLevel;               // seen against a pale sky it needs more
+    b.material.alpha = Math.max(0.42, Math.min(0.95, base * lift * (0.62 + 0.38 * u * u * (3 - 2 * u))));
+  }
+};
+const beamCore = sph(beacon, 'beamCore', 1.5, beamCoreMat, [0, 0, 0], 16);
+beamCore.isPickable = false; beamCore.alwaysSelectAsActiveMesh = true; noCast(beamCore);
+beamCore.renderingGroupId = 1;
+const beaconLight = new BABYLON.PointLight('beaconLight', V3(0, 0, 0), scene);
+beaconLight.parent = beacon;
+beaconLight.diffuse = hexc(0xffd694); beaconLight.range = 40; beaconLight.intensity = 8;
+
+/* ---------- two things the keeper can see from the lantern ---------- */
+tower.computeWorldMatrix(true);
+const lampWorld = BABYLON.Vector3.TransformCoordinates(V3(0, 11.6, 0), tower.getWorldMatrix());
+const outDir = V3(0.30, 0, -0.95).normalize();
+const sideDir = BABYLON.Vector3.Cross(V3(0, 1, 0), outDir).normalize();
+const SEA_Y = -0.62;
+const place = (dist, lateral) => {
+  const p = lampWorld.add(outDir.scale(dist)).add(sideDir.scale(lateral));
+  p.y = SEA_Y; return p;
+};
+
+// a sounding buoy riding the open water
+const seaBuoyHull = pbr('seaBuoyHull', 0x9a4630, 0.62, 0.10);
+const seaBuoyLampMat = pbr('seaBuoyLamp', 0xffe6b0, 0.40, 0.0, { emissive: 0xffab3a, emissiveIntensity: 2.6 });
+const seaBuoyG = grp('seaBuoy', seaScape);
+seaBuoyG.position.copyFrom(place(13.5, -1.7));
+seaBuoyG.position.y = SEA_Y + 0.30;
+seaBuoyG.scaling.setAll(0.86);
+sph(seaBuoyG, 'seaBuoyFloat', 0.40, seaBuoyHull, [0, 0.05, 0], 20);
+cyl(seaBuoyG, 'seaBuoyWaterline', 0.41, 0.41, 0.08, M.brass, [0, 0.05, 0], null, 20);
+cyl(seaBuoyG, 'seaBuoyDeck', 0.26, 0.31, 0.09, M.brass, [0, 0.38, 0], null, 18);
+cyl(seaBuoyG, 'seaBuoyMast', 0.035, 0.048, 0.92, M.brass, [0, 0.86, 0], null, 10);
+sph(seaBuoyG, 'seaBuoyLamp', 0.105, seaBuoyLampMat, [0, 1.36, 0], 12);
+torus(seaBuoyG, 'seaBuoyCage', 0.16, 0.026, M.brass, [0, 1.36, 0], [Math.PI / 2, 0, 0], Math.PI * 2, 18);
+for (let i = 0; i < 3; i++)
+  torus(seaBuoyG, 'seaBuoyReflector', 0.15, 0.022, M.brass, [0, 1.02, 0],
+    [i === 0 ? 0 : Math.PI / 2, i === 2 ? Math.PI / 2 : 0, 0], Math.PI * 2, 16);
+cyl(seaBuoyG, 'seaBuoyKeel', 0.32, 0.10, 0.42, M.iron, [0, -0.22, 0], null, 16);
+
+// and a boat aground on a reef, still rigged
+const reefMat = pbr('reefRock', 0x6f6858, 0.95, 0.02);
+const wreckMat = pbr('wreckHull', 0x2a2620, 0.70, 0.12, { double: true });
+const wreckG = grp('strandedBoat', seaScape);
+wreckG.position.copyFrom(place(13.5, 3.2));
+wreckG.rotation.set(0.10, 0.7, -0.26);
+for (const [x, y, z, s] of [[-1.05, -0.10, 0.35, 0.62], [0.95, -0.12, -0.30, 0.70], [0.20, -0.16, 0.85, 0.52], [-0.55, -0.14, -0.80, 0.46], [1.45, -0.18, 0.55, 0.40]]) {
+  const r = BABYLON.MeshBuilder.CreatePolyhedron('reefRock', { type: 2, size: s }, scene);
+  finish(r, 'reefRock', wreckG, reefMat, [x, y, z], [Math.random(), Math.random(), Math.random()]);
+}
+const wreckHull = sph(wreckG, 'wreckHull', 0.62, wreckMat, [0, 0.20, 0], 22);
+wreckHull.scaling.set(2.05, 0.52, 0.72);
+box(wreckG, 'wreckGunwaleL', 2.35, 0.07, 0.06, wreckMat, [0, 0.44, 0.42], [0, 0.05, 0]);
+box(wreckG, 'wreckGunwaleR', 2.35, 0.07, 0.06, wreckMat, [0, 0.44, -0.42], [0, -0.05, 0]);
+box(wreckG, 'wreckTransom', 0.08, 0.44, 0.66, wreckMat, [-1.22, 0.34, 0]);
+box(wreckG, 'wreckThwart', 0.30, 0.06, 0.72, wreckMat, [-0.18, 0.44, 0]);
+cyl(wreckG, 'wreckMast', 0.038, 0.056, 3.10, wreckMat, [0.25, 1.90, 0], [0, 0, 0.22], 10);
+cyl(wreckG, 'wreckBoom', 0.030, 0.030, 1.00, wreckMat, [-0.20, 0.72, 0], [0, 0, Math.PI / 2 - 0.10], 8);
+const wreckRig = pbr('wreckRig', 0x9c937d, 0.95, 0.0);
+wire(wreckG, 'wreckForestay', [0.60, 3.30, 0], [1.18, 0.52, 0], 0.018, wreckRig);
+wire(wreckG, 'wreckBackstay', [0.60, 3.30, 0], [-1.20, 0.50, 0], 0.018, wreckRig);
+wire(wreckG, 'wreckShroudL', [0.52, 2.90, 0], [0.20, 0.48, 0.42], 0.018, wreckRig);
+wire(wreckG, 'wreckShroudR', [0.52, 2.90, 0], [0.20, 0.48, -0.42], 0.018, wreckRig);
+
+// the trunk's own shadow must not fall across the distant sea
+for (const m of seaScape.getChildMeshes()) m.receiveShadows = false;
+/* ---------- rain and snow ---------- */
+const DROPS = 1500, FIELD = 7, TOPY = 4.2;
+const rp = new Float32Array(DROPS * 6), rv = new Float32Array(DROPS);
+const rainLines = [];
+for (let i = 0; i < DROPS; i++) {
+  const x = (Math.random() - 0.5) * FIELD, z = (Math.random() - 0.5) * FIELD - 0.6;
+  const y = Math.random() * TOPY - 0.4;
+  const len = 0.026 + Math.random() * 0.040;
+  rv[i] = 2.6 + Math.random() * 2.2;
+  rp[i * 6] = x; rp[i * 6 + 1] = y; rp[i * 6 + 2] = z;
+  rp[i * 6 + 3] = x + 0.006; rp[i * 6 + 4] = y - len; rp[i * 6 + 5] = z;
+  rainLines.push([V3(rp[i * 6], rp[i * 6 + 1], rp[i * 6 + 2]), V3(rp[i * 6 + 3], rp[i * 6 + 4], rp[i * 6 + 5])]);
+}
+const rain = BABYLON.MeshBuilder.CreateLineSystem('rain', { lines: rainLines, updatable: true }, scene);
+rain.color = hexc(0xd8dbd6); rain.alpha = 0.30;
+
+// snow: camera-facing quads, so it survives the portal pass (sprites do not)
+const FLAKES = 1200;
+const sp = new Float32Array(FLAKES * 3), sv = new Float32Array(FLAKES), sph_ = new Float32Array(FLAKES);
+for (let i = 0; i < FLAKES; i++) {
+  sp[i * 3] = (Math.random() - 0.5) * FIELD;
+  sp[i * 3 + 1] = Math.random() * TOPY - 0.4;
+  sp[i * 3 + 2] = (Math.random() - 0.5) * FIELD - 0.6;
+  sv[i] = 0.16 + Math.random() * 0.22;
+  sph_[i] = Math.random() * 6.283;
+}
+const flakeCanvas = document.createElement('canvas');
+flakeCanvas.width = flakeCanvas.height = 32;
+{
+  const fctx = flakeCanvas.getContext('2d');
+  const fg = fctx.createRadialGradient(16, 16, 0, 16, 16, 16);
+  fg.addColorStop(0, 'rgba(255,255,255,1)');
+  fg.addColorStop(0.45, 'rgba(255,255,255,0.75)');
+  fg.addColorStop(1, 'rgba(255,255,255,0)');
+  fctx.fillStyle = fg; fctx.fillRect(0, 0, 32, 32);
+}
+const flakeTex = new BABYLON.Texture(flakeCanvas.toDataURL(), scene);
+flakeTex.hasAlpha = true;
+const snowMat = new BABYLON.StandardMaterial('snowMat', scene);
+snowMat.diffuseTexture = flakeTex;
+snowMat.opacityTexture = flakeTex;
+snowMat.emissiveColor = new BABYLON.Color3(1, 1, 1);
+snowMat.disableLighting = true;
+snowMat.backFaceCulling = false;
+snowMat.disableDepthWrite = true;
+snowMat.alpha = 0.85;
+const snowPos = new Float32Array(FLAKES * 12);
+{
+  const idx = [], uv = [];
+  for (let i = 0; i < FLAKES; i++) {
+    const o = i * 4;
+    idx.push(o, o + 1, o + 2, o, o + 2, o + 3);
+    uv.push(0, 0, 1, 0, 1, 1, 0, 1);
+  }
+  const vd = new BABYLON.VertexData();
+  vd.positions = snowPos; vd.indices = idx; vd.uvs = uv;
+  vd.normals = new Float32Array(FLAKES * 12);
+  for (let i = 0; i < FLAKES * 4; i++) vd.normals[i * 3 + 2] = 1;
+  var snow = new BABYLON.Mesh('snow', scene);
+  vd.applyToMesh(snow, true);
+}
+snow.material = snowMat;
+snow.alwaysSelectAsActiveMesh = true;
+
+/* ---------- sky, fog, weather state ---------- */
+const skyCanvas = { width: 4, height: 256 };
+const SKY_DARK = ['#1d222b', '#2c333d', '#3b3f43', '#2a2c2e'];
+const SKY_BRIGHT = ['#7f93b4', '#c9cdcb', '#efe4c9', '#cfcabb'];
+const skyTex = new BABYLON.DynamicTexture('skyTex', { width: 4, height: 256 }, scene, false);
+const sctx = skyTex.getContext();
+skyTex.wrapV = BABYLON.Texture.CLAMP_ADDRESSMODE;
+skyTex.vScale = -2; skyTex.vOffset = 2;      // gradient sits in the upper hemisphere
+const skyMat = new BABYLON.StandardMaterial('skyMat', scene);
+skyMat.emissiveTexture = skyTex;
+skyMat.diffuseColor = new BABYLON.Color3(0, 0, 0);
+skyMat.specularColor = new BABYLON.Color3(0, 0, 0);
+skyMat.disableLighting = true;
+skyMat.backFaceCulling = false;
+skyMat.fogEnabled = false;
+skyMat.disableDepthWrite = true;
+const skyDome = BABYLON.MeshBuilder.CreateSphere('skyDome', { diameter: 800, segments: 24 }, scene);
+skyDome.material = skyMat;
+skyDome.parent = seaScape;
+skyDome.isPickable = false;
+skyDome.infiniteDistance = true;
+
+const mixHex = (a, b, t) => {
+  const pa = [parseInt(a.slice(1, 3), 16), parseInt(a.slice(3, 5), 16), parseInt(a.slice(5, 7), 16)];
+  const pb = [parseInt(b.slice(1, 3), 16), parseInt(b.slice(3, 5), 16), parseInt(b.slice(5, 7), 16)];
+  return '#' + pa.map((v, i) => Math.round(v + (pb[i] - v) * t).toString(16).padStart(2, '0')).join('');
+};
+const SEA = {
+  calm:  { amp: 0.35, speed: 0.7, color: 0x6b7686, rough: 0.34 },
+  swell: { amp: 1.00, speed: 1.0, color: 0x5b6880, rough: 0.28 },
+  storm: { amp: 2.10, speed: 1.7, color: 0x47505f, rough: 0.22 },
+};
+let skyLevel = 0.62;
+const WX = { precip: 'rain', sea: 'swell', sky: skyLevel };
+const fogColor = new BABYLON.Color3(0.78, 0.77, 0.73);
+const paintSky = (v) => {
+  skyLevel = Math.min(1, Math.max(0, v));
+  const g = sctx.createLinearGradient(0, 0, 0, 256);
+  const stops = [0, 0.55, 0.82, 1];
+  SKY_DARK.forEach((dark, i) => g.addColorStop(stops[i], mixHex(dark, SKY_BRIGHT[i], skyLevel)));
+  sctx.fillStyle = g; sctx.fillRect(0, 0, 4, 256);
+  skyTex.update(false);
+  const h = BABYLON.Color3.Lerp(hexc(0x2b3038), hexc(0xd9d4c4), skyLevel);
+  fogColor.copyFrom(h);
+  seaMat.baseColor = hexc(SEA[WX.sea].color).scale(0.45 + 0.75 * skyLevel);
+};
+window.setSky = (v) => { WX.sky = v; paintSky(v); return WX.sky; };
+window.setWeather = ({ precip, sea, sky } = {}) => {
+  if (precip) WX.precip = precip;
+  if (sea && SEA[sea]) { WX.sea = sea; seaMat.roughness = SEA[sea].rough; }
+  if (sea || sky !== undefined) paintSky(sky !== undefined ? sky : WX.sky);
+  return { ...WX };
+};
+window.weatherState = WX;
+paintSky(skyLevel);
+
+/* ---------- the lid panel as a window onto the sea (screen-space portal) ---------- */
+BABYLON.Effect.ShadersStore['seaWindowVertexShader'] = `
+precision highp float;
+attribute vec3 position;
+uniform mat4 worldViewProjection;
+void main(){ gl_Position = worldViewProjection * vec4(position,1.0); }`;
+BABYLON.Effect.ShadersStore['seaWindowFragmentShader'] = `
+precision highp float;
+uniform sampler2D portal; uniform vec2 uRes;
+void main(){ gl_FragColor = vec4(texture2D(portal, gl_FragCoord.xy / uRes).rgb, 1.0); }`;
+
+const rttSize = () => ({
+  width: Math.max(2, Math.floor(engine.getRenderWidth() * 0.9)),
+  height: Math.max(2, Math.floor(engine.getRenderHeight() * 0.9)),
+});
+const rtt = new BABYLON.RenderTargetTexture('portal', rttSize(), scene, false, true);
+rtt.renderList = seaScape.getChildMeshes().concat([rain, snow]);
+rtt.renderSprites = false;                    // the fog sprites stay out of the window
+rtt.refreshRate = 2;                          // refresh every other frame, as in three.js
+scene.customRenderTargets.push(rtt);
+
+const seaWindow = new BABYLON.ShaderMaterial('seaWindow', scene,
+  { vertex: 'seaWindow', fragment: 'seaWindow' },
+  { attributes: ['position'], uniforms: ['worldViewProjection', 'uRes'], samplers: ['portal'] });
+seaWindow.setTexture('portal', rtt);
+windowPane.material = seaWindow;
+
+// The seascape lives on its own layer, seen only by the portal camera — no
+// per-frame show/hide juggling, and the trunk never appears inside its own window.
+const SEA_LAYER = 0x40000000;
+for (const m of rtt.renderList) m.layerMask = SEA_LAYER;
+camera.layerMask = 0x0FFFFFFF;
+const portalCam = new BABYLON.FreeCamera('portalCam', BABYLON.Vector3.Zero(), scene);
+portalCam.layerMask = SEA_LAYER;
+portalCam.minZ = 0.01; portalCam.maxZ = 500; portalCam.fov = camera.fov;
+portalCam.detachControl();
+rtt.activeCamera = portalCam;
+scene.activeCamera = camera;
+// keep the open sea out of the shadow frustum — it would swamp the map
+shadow.getShadowMap().renderList = casters.filter((m) => m.layerMask !== SEA_LAYER);
+// distance haze: near objects fall inside fogStart, so the trunk stays clear
+scene.fogMode = BABYLON.Scene.FOGMODE_LINEAR;
+scene.fogColor = fogColor; scene.fogStart = 30; scene.fogEnd = 210;
+
+/* ---------- the fog itself (sprites) ---------- */
+fogRoom.computeWorldMatrix(true);
+const fogAnchor = fogRoom.getAbsolutePosition().clone();
+const fogMgr = new BABYLON.SpriteManager('fogMgr', puffURL, 52, { width: 64, height: 64 }, scene);
+fogMgr.blendMode = BABYLON.Engine.ALPHA_COMBINE;
+fogMgr.disableDepthWrite = true;
+fogMgr.layerMask = 0x0FFFFFFF;               // the chamber's own weather
+fogMgr.isPickable = false;
+fogMgr.layerMask = 0x0FFFFFFF;
+const devilMat = new BABYLON.StandardMaterial('dustDevil', scene);
+devilMat.diffuseTexture = new BABYLON.Texture(puffURL, scene);
+devilMat.diffuseTexture.hasAlpha = true;
+devilMat.opacityTexture = devilMat.diffuseTexture;
+devilMat.emissiveColor = new BABYLON.Color3(0.90, 0.79, 0.60);
+devilMat.diffuseColor = new BABYLON.Color3(0, 0, 0);
+devilMat.specularColor = new BABYLON.Color3(0, 0, 0);
+devilMat.disableLighting = true;
+devilMat.backFaceCulling = false;
+devilMat.disableDepthWrite = true;
+devilMat.fogEnabled = false;
+devilMat.alpha = 0.30;
+const devil = grp('dustDevil', fogRoom);
+devil.position.set(0, 0.019, 0);
+// grains of sand, not sheet metal: a cloud of camera-facing specks spiralling up
+const GRAINS = 420;
+const devilGeoData = { pos: new Float32Array(GRAINS * 12), idx: [], uv: [] };
+for (let i = 0; i < GRAINS; i++) {
+  const o = i * 4;
+  devilGeoData.idx.push(o, o + 1, o + 2, o, o + 2, o + 3);
+  devilGeoData.uv.push(0, 0, 1, 0, 1, 1, 0, 1);
+}
+const devilMesh = new BABYLON.Mesh('dustGrains', scene);
+{
+  const vd = new BABYLON.VertexData();
+  vd.positions = devilGeoData.pos; vd.indices = devilGeoData.idx; vd.uvs = devilGeoData.uv;
+  vd.normals = new Float32Array(GRAINS * 12);
+  for (let i = 0; i < GRAINS * 4; i++) vd.normals[i * 3 + 2] = 1;
+  vd.applyToMesh(devilMesh, true);
+}
+devilMesh.parent = devil;
+devilMesh.material = devilMat;
+devilMesh.isPickable = false;
+devilMesh.alwaysSelectAsActiveMesh = true;
+noCast(devilMesh);
+const grains = [];
+for (let i = 0; i < GRAINS; i++) {
+  const t = Math.pow(Math.random(), 0.65);
+  grains.push({
+    t, a: Math.random() * Math.PI * 2,
+    sp: 2.6 + Math.random() * 3.4,
+    rise: 0.016 + Math.random() * 0.026,
+    jr: 0.7 + Math.random() * 0.6,
+    sz: 0.0075 + Math.random() * 0.0085,
+  });
+}
+const devilPos = devilGeoData.pos;
+const devilFoot = BABYLON.MeshBuilder.CreateDisc('devilFoot', { radius: 0.020, tessellation: 22 }, scene);
+devilFoot.parent = devil; devilFoot.material = devilMat;
+devilFoot.rotation.x = Math.PI / 2; devilFoot.position.y = 0.001;
+devilFoot.isPickable = false; noCast(devilFoot);
+const devilState = { x: 0, z: 0, sp: 0 };
+const fogPuffs = [];
+for (let i = 0; i < 14; i++) {
+  const s = 0.070 + Math.random() * 0.036;
+  const sprite = new BABYLON.Sprite('fogPuff', fogMgr);
+  sprite.size = s;
+  sprite.color = new BABYLON.Color4(0.93, 0.78, 0.52, 1);   // blown sand, not steam
+  fogPuffs.push({
+    sprite, s, op: 0.52 + Math.random() * 0.30,
+    life: Math.random(), speed: 0.085 + Math.random() * 0.085,
+    x: (Math.random() - 0.5) * 0.11,
+    z0: -0.055 + Math.random() * 0.05,
+    ph: Math.random() * 6.283,
+  });
+}
+const fogFloor = [];
+for (let i = 0; i < 13; i++) {
+  const sprite = new BABYLON.Sprite('fogFloorPuff', fogMgr);
+  sprite.color = new BABYLON.Color4(0.91, 0.76, 0.52, 1);
+  sprite.width = 0.058 + Math.random() * 0.040;
+  sprite.height = 0.015 + Math.random() * 0.010;
+  const x = (Math.random() - 0.5) * 0.170, z = (Math.random() - 0.5) * 0.136;
+  const y = 0.017 + Math.random() * 0.006;
+  sprite.position = fogAnchor.add(V3(x, y, z));
+  fogFloor.push({ sprite, x, y, z, ph: Math.random() * 6.283 });
+}
+
+/* ---------- 등대의 방: standing inside the lantern ---------- */
+const veil = document.createElement('div');
+veil.id = 'veil';
+document.body.appendChild(veil);
+const exitBtn = document.createElement('button');
+exitBtn.id = 'exit';
+exitBtn.className = 'btn btn-secondary';
+exitBtn.textContent = '관측소로 돌아가기';
+document.body.appendChild(exitBtn);
+const roomStyle = document.createElement('style');
+roomStyle.textContent =
+  '#veil{position:fixed;inset:0;pointer-events:none;z-index:2;opacity:0;transition:opacity .25s linear;' +
+  'background:radial-gradient(120% 90% at 50% 42%, rgba(6,20,32,.28) 0%, rgba(2,7,14,.86) 78%, #010307 100%)}' +
+  '#exit{position:fixed;top:22px;right:24px;z-index:4;opacity:0;pointer-events:none;white-space:nowrap;' +
+  'transition:opacity .4s ease;font-family:var(--font-body,Lora,Georgia,serif);font-size:12px;' +
+  'letter-spacing:.14em;padding:9px 16px;border-radius:4px;background:transparent;cursor:pointer;' +
+  'border:1px solid #b68235;color:#d8bb84}' +
+  '#exit.show{opacity:1;pointer-events:auto}' +
+  '#exit:hover{background:rgba(182,130,53,.14)}' +
+  '#exit:focus-visible{outline:2px solid #b68235;outline-offset:2px}';
+document.head.appendChild(roomStyle);
+
+const lampGlowMesh = tower.getChildMeshes().find((m) => m.name === 'lampGlow');
+const lanternGlassMesh = tower.getChildMeshes().find((m) => m.name === 'lanternGlass');
+
+// a free camera for the room; the arc-rotate camera keeps the observatory
+const roomCam = new BABYLON.FreeCamera('roomCam', BABYLON.Vector3.Zero(), scene);
+roomCam.minZ = 0.004; roomCam.maxZ = 500;
+roomCam.fov = camera.fov;
+roomCam.layerMask = SEA_LAYER;                 // in the room only the seascape exists
+roomCam.detachControl();
+
+const towerUI = document.createElement('div');
+towerUI.id = 'towerui';
+towerUI.innerHTML =
+  '<p class="ttl">위험을 미리 감지하려는 부분</p>' +
+  '<p class="sub">조종대의 레버로 빛이 닿는 범위를, 손잡이로 도는 속도를 조절해 보세요.</p>';
+document.body.appendChild(towerUI);
+const towerStyle = document.createElement('style');
+towerStyle.textContent =
+  '#towerui{position:fixed;left:50%;bottom:7vh;transform:translate(-50%,12px);z-index:5;display:none;' +
+  'flex-direction:column;gap:9px;align-items:center;text-align:center;max-width:min(520px,88vw);' +
+  'opacity:0;transition:opacity .5s ease,transform .5s ease;text-shadow:0 1px 14px rgba(2,6,12,.85)}' +
+  '#towerui.show{display:flex}#towerui.on{opacity:1;transform:translate(-50%,0)}' +
+  '#towerui .ttl{margin:0;font-family:var(--font-heading,\'Cormorant Garamond\',Georgia,serif);' +
+  'font-size:24px;line-height:1.4;color:#f4efe4}' +
+  '#towerui .sub{margin:0 0 4px;font-family:var(--font-body,Lora,Georgia,serif);font-size:11.5px;' +
+  'letter-spacing:.10em;line-height:1.7;color:rgba(238,232,220,.72)}' +
+  '#towerui label{display:flex;align-items:center;gap:12px;font-family:var(--font-body,Lora,Georgia,serif);' +
+  'font-size:11px;letter-spacing:.20em;color:rgba(216,187,132,.9)}' +
+  '#towerui input[type=range]{-webkit-appearance:none;appearance:none;width:min(260px,52vw);height:2px;' +
+  'background:rgba(182,130,53,.5);border-radius:2px;outline:none;border:0;padding:0}' +
+  '#towerui input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:13px;height:13px;' +
+  'border-radius:50%;background:#e6cd9c;border:1px solid #b68235;cursor:pointer}' +
+  '#towerui input[type=range]:focus-visible{outline:2px solid #b68235;outline-offset:4px}';
+document.head.appendChild(towerStyle);
+
+let towerMode = false, towerBusy = false;
+const towerSeat = new BABYLON.Vector3(), towerFwd = new BABYLON.Vector3();
+const look = { yaw: 0, pitch: 0 };
+const UPV = V3(0, 1, 0);
+
+const aimRoomCam = () => {
+  const f = towerFwd.clone();
+  f.rotateByQuaternionToRef(BABYLON.Quaternion.RotationAxis(UPV, look.yaw), f);
+  const right = BABYLON.Vector3.Cross(UPV, f).normalize();
+  f.rotateByQuaternionToRef(BABYLON.Quaternion.RotationAxis(right, look.pitch), f);
+  roomCam.position.copyFrom(towerSeat);
+  roomCam.setTarget(towerSeat.add(f.scale(4)));
+};
+
+const installTowerView = () => {
+  towerMode = true;
+  tower.computeWorldMatrix(true);
+  // stand inside the lamp room, framed by the glazing bars, looking out
+  const outward = V3(0.30, 0, -0.95).normalize();
+  const eye = V3(outward.x * 1.10, 11.56, outward.z * 1.10);
+  const aim = outward.clone();
+  aim.rotateByQuaternionToRef(BABYLON.Quaternion.RotationAxis(UPV, 0.16), aim);
+  const look2 = V3(aim.x * 30, 11.10, aim.z * 30);
+  const wm = tower.getWorldMatrix();
+  towerSeat.copyFrom(BABYLON.Vector3.TransformCoordinates(eye, wm));
+  towerFwd.copyFrom(BABYLON.Vector3.TransformCoordinates(look2, wm).subtract(towerSeat).normalize());
+  look.yaw = 0; look.pitch = 0;
+  aimRoomCam();
+  scene.activeCamera = roomCam;
+  // the glare is dimmed and the glazing cleared, but the beam still shows
+  if (lampGlowMesh) lampGlowMesh.setEnabled(false);
+  if (lanternGlassMesh) lanternGlassMesh.isVisible = false;
+
+  lampMat.emissiveColor = hexc(0xffd694).scale(0.9);
+  if (window.recordVoice) window.recordVoice('tower');
+  beaconLight.intensity = 1.2;
+  rtt.refreshRate = 0;                         // the lid window is out of sight
+  exitBtn.textContent = '관측소로 돌아가기';
+  exitBtn.classList.add('show');
+  towerUI.classList.add('show');
+  requestAnimationFrame(() => towerUI.classList.add('on'));
+  veil.style.opacity = '0';
+  towerBusy = false;
+};
+const restoreObservatory = () => {
+  towerMode = false;
+  scene.activeCamera = camera;
+  if (lampGlowMesh) { lampGlowMesh.setEnabled(true); lampGlowMesh.isVisible = true; lampGlowMesh.scaling.setAll(1); }
+  if (lanternGlassMesh) lanternGlassMesh.isVisible = true;
+  beaconLight.intensity = 8;
+  rtt.refreshRate = 2;
+  exitBtn.classList.remove('show');
+  towerUI.classList.remove('show', 'on');
+};
+
+/* ---------- the flight the room is entered by ---------- */
+let fly = null;
+const ease = (u) => u < 0.5 ? 4 * u * u * u : 1 - Math.pow(-2 * u + 2, 3) / 2;
+const flyTo = (p, tg, dur, opts = {}) => {
+  fly = { p0: camera.position.clone(), t0: camera.getTarget().clone(), p1: p.clone(), t1: tg.clone(),
+    dur, el: 0, fov0: camera.fov, fov1: opts.fov === undefined ? camera.fov : opts.fov,
+    veil: !!opts.veil, onDone: opts.onDone };
+  camera.detachControl();
+};
+const flyTick = (dt) => {
+  if (!fly) return;
+  fly.el += dt;
+  const u = Math.min(1, fly.el / fly.dur), e = ease(u);
+  camera.setTarget(BABYLON.Vector3.Lerp(fly.t0, fly.t1, e));
+  camera.setPosition(BABYLON.Vector3.Lerp(fly.p0, fly.p1, e));
+  if (fly.fov1 !== fly.fov0) camera.fov = fly.fov0 + (fly.fov1 - fly.fov0) * e;
+  if (fly.veil) veil.style.opacity = Math.max(0, (u - 0.64) / 0.36).toFixed(3);
+  if (u >= 1) { const done = fly.onDone; fly = null; if (done) done(); }
+};
+
+const enterTower = (hit) => {
+  if (towerMode || towerBusy || fly) return;
+  towerBusy = true;
+  towerHome.pos.copyFrom(camera.position);
+  towerHome.tgt.copyFrom(camera.getTarget());
+  towerHome.fov = camera.fov;
+  // zoom in toward the window before stepping through it
+  const to = hit.clone(), from = camera.position.clone();
+  const near = to.add(from.subtract(to).scale(0.16));
+  flyTo(near, to, 1.8, { fov: 14 * Math.PI / 180, veil: true, onDone: () => {
+    camera.fov = 45 * Math.PI / 180;
+    installTowerView();
+  }});
+};
+const leaveTower = () => {
+  if (!towerMode || towerBusy) return;
+  towerBusy = true;
+  veil.style.opacity = '1';
+  setTimeout(() => {
+    restoreObservatory();
+    camera.fov = towerHome.fov;
+    camera.setTarget(towerHome.tgt);
+    camera.setPosition(towerHome.pos);
+    camera.attachControl(canvas, true);
+    veil.style.opacity = '0';
+    towerBusy = false;
+  }, 380);
+};
+const towerHome = { pos: BABYLON.Vector3.Zero(), tgt: BABYLON.Vector3.Zero(), fov: camera.fov };
+window.enterLighthouse = () => {
+  tower.computeWorldMatrix(true);
+  enterTower(BABYLON.Vector3.TransformCoordinates(V3(0, 11.6, 0), tower.getWorldMatrix()));
+};
+window.leaveLighthouse = leaveTower;
+window.__towerNow = () => { towerBusy = true; installTowerView(); };
+
+/* ---------- pointer: turn your head in the room, step through the window outside ---------- */
+let downAt = null;
+canvas.addEventListener('pointerdown', (e) => {
+  downAt = { x: e.clientX, y: e.clientY, lx: e.clientX, ly: e.clientY, grab: null };
+  if (!towerMode) return;
+  const hit = scene.pick(scene.pointerX, scene.pointerY,
+    (m) => reachParts.indexOf(m) >= 0 || speedParts.indexOf(m) >= 0);
+  if (hit && hit.hit) downAt.grab = reachParts.indexOf(hit.pickedMesh) >= 0 ? 'reach' : 'speed';
+});
+canvas.addEventListener('pointermove', (e) => {
+  if (!(towerMode || sandRide || diveMode) || !downAt) return;
+  const dx = e.clientX - downAt.lx, dy = e.clientY - downAt.ly;
+  downAt.lx = e.clientX; downAt.ly = e.clientY;
+  const limY = diveMode ? 3.14 : 1.15, limP = diveMode ? 1.30 : 0.35;
+  look.yaw = Math.max(-limY, Math.min(limY, look.yaw - dx * 0.0032));
+  look.pitch = Math.max(-limP, Math.min(limP, look.pitch - dy * 0.0026));
+  if (!sandRide) aimRoomCam();
+});
+const drawerWater = W.mesh;
+const seaBuoyMeshes = () => seaBuoyG.getChildMeshes();
+const seaBuoy2 = seaBuoyG.clone('seaBuoyFar');
+seaBuoy2.setEnabled(false);
+seaBuoy2.position.copyFrom(place(31.0, 7.0));
+seaBuoy2.position.y = SEA_Y + 0.24;
+seaBuoy2.scaling.setAll(0.95);
+const seaBuoyMeshes2 = () => seaBuoy2.getChildMeshes();
+for (const m of seaBuoy2.getChildMeshes().concat(beamCones)) {
+  m.layerMask = SEA_LAYER;
+  if (rtt.renderList.indexOf(m) < 0) rtt.renderList.push(m);
+}
+const wreckMeshes = () => wreckG.getChildMeshes();
+const fogRoomMeshes = () => fogRoom.getChildMeshes();
+canvas.addEventListener('pointerup', (e) => {
+  const moved = downAt && Math.hypot(e.clientX - downAt.x, e.clientY - downAt.y) > 6;
+  downAt = null;
+  if (moved || busy()) return;
+  const rayOf = (cam) => scene.createPickingRay(scene.pointerX, scene.pointerY, BABYLON.Matrix.Identity(), cam);
+  const hitAny = (list, cam) => {
+    const p = scene.pickWithRay(rayOf(cam), (m) => list.indexOf(m) >= 0);
+    return (p && p.hit) ? p.pickedPoint : null;
+  };
+  if (towerMode) {                            // from the lantern the buoy and the wreck are doors
+    const b = hitAny(seaBuoyMeshes().concat(seaBuoyMeshes2()), roomCam);
+    if (b) { if (window.recordVoice) window.recordVoice('wave'); enterDive(b); return; }
+    const w = hitAny(wreckMeshes(), roomCam);
+    if (w) { enterSand(w); return; }
+    return;
+  }
+  if (sandRide || diveMode || cloudMode) return;   // inside, clicks look around
+  // the lid window is the lighthouse door and nothing else
+  const paneHit = scene.pick(scene.pointerX, scene.pointerY, (m) => m === windowPane);
+  if (paneHit && paneHit.hit) {
+    const towerMeshes = tower.getChildMeshes();
+    const towerHit = scene.pickWithRay(rayOf(camera), (m) => towerMeshes.indexOf(m) >= 0);
+    if (towerHit && towerHit.hit) enterTower(towerHit.pickedPoint);
+    return;
+  }
+  // on the deck: the listening machine, the sea in the drawer, the chamber, the jar
+  const phonoHit = hitAny(phono.getChildMeshes(), camera);
+  if (phonoHit) { playVoices(); return; }
+  const water = hitAny([drawerWater], camera);
+  if (water) { enterDive(water); return; }
+  const chamber = hitAny(fogRoomMeshes(), camera);
+  if (chamber) { enterSand(chamber); return; }
+  const jarHit = hitAny(jarG.getChildMeshes(), camera);
+  if (jarHit) enterCloud();
+});
+exitBtn.addEventListener('click', () => { if (cloudMode) leaveCloud(); else if (towerMode) leaveTower(); else leaveRoom(); });
+canvas.addEventListener('dblclick', () => { if (towerMode) leaveTower(); else if (anyRoom()) leaveRoom(); });
+window.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape') { if (cloudMode) leaveCloud(); else if (towerMode) leaveTower(); else leaveRoom(); return; }
+  const k = e.key.toLowerCase();
+  if (sandRide) {
+    if (k === 'a' || e.key === 'ArrowLeft') boat.steer = -1;
+    else if (k === 'd' || e.key === 'ArrowRight') boat.steer = 1;
+  } else if (diveMode) {
+    if (k === 'w' || e.key === 'ArrowUp') swim.f = 1;
+    else if (k === 's' || e.key === 'ArrowDown') swim.f = -1;
+    else if (k === 'q' || e.key === 'PageUp') swim.up = 1;
+    else if (k === 'e' || e.key === 'PageDown') swim.up = -1;
+  }
+});
+window.addEventListener('keyup', (e) => {
+  const k = e.key.toLowerCase();
+  if ('ad'.includes(k) || e.key === 'ArrowLeft' || e.key === 'ArrowRight') boat.steer = 0;
+  if ('ws'.includes(k) || e.key === 'ArrowUp' || e.key === 'ArrowDown') swim.f = 0;
+  if ('qe'.includes(k) || e.key === 'PageUp' || e.key === 'PageDown') swim.up = 0;
+});
+
+/* ================= 사막의 방: aboard the boat ================= */
+const SAND_LAYER = 0x20000000;
+const sandScape = grp('sandScape');
+const onSand = (m) => { m.layerMask = SAND_LAYER; m.receiveShadows = false; return m; };
+
+const rippleTex = new BABYLON.DynamicTexture('sandRipple', { width: 512, height: 512 }, scene, true);
+{
+  const c = rippleTex.getContext();
+  c.fillStyle = '#d9c199'; c.fillRect(0, 0, 512, 512);
+  for (let i = 0; i < 512; i += 2) {
+    const w = 0.5 + 0.5 * Math.sin(i * 0.11) * Math.sin(i * 0.031);
+    c.fillStyle = 'rgba(176,150,112,' + (0.10 + 0.16 * w).toFixed(3) + ')';
+    c.fillRect(0, i + Math.sin(i * 0.05) * 3, 512, 1);
+  }
+  for (let i = 0; i < 900; i++) {
+    c.fillStyle = 'rgba(150,126,92,' + (0.05 + Math.random() * 0.10).toFixed(3) + ')';
+    c.fillRect(Math.random() * 512, Math.random() * 512, 2, 2);
+  }
+  rippleTex.update(false);
+  rippleTex.uScale = 46; rippleTex.vScale = 46;
+}
+const sandMat2 = new BABYLON.PBRMetallicRoughnessMaterial('desertSand', scene);
+sandMat2.baseTexture = rippleTex;
+sandMat2.baseColor = hexc(0xfff2dd);
+sandMat2.roughness = 1.0; sandMat2.metallic = 0.0;
+sandMat2.backFaceCulling = false;
+sandMat2.maxSimultaneousLights = 8;
+const SD = 460;
+const duneAt = (x, z) =>                            // long crescent dunes with ripples across them
+  3.1 * Math.sin(x * 0.028 + 0.4) * (0.55 + 0.45 * Math.cos(z * 0.019 + 1.1)) +
+  1.7 * Math.sin(z * 0.023 - 0.8) * (0.6 + 0.4 * Math.sin(x * 0.011)) +
+  0.62 * Math.sin((x + z * 0.6) * 0.09) +
+  0.20 * Math.sin((x * 0.8 - z) * 0.42);
+const sandField = planeMesh(sandScape, 'desertPlain', SD, SD, 190, 190, sandMat2, [0, 0, 0], [-Math.PI / 2, 0, 0], false);
+{
+  const p = sandField.pos;
+  for (let i = 0; i < p.length; i += 3) p[i + 2] = duneAt(p[i], p[i + 1]);
+  pushPlane(sandField);
+  flipPlane(sandField);
+}
+// a few dark stones, so the eye has something to measure the crawl against
+const stoneMat = pbr('desertStone', 0x6c6152, 0.95, 0.02);
+for (let i = 0; i < 26; i++) {
+  const a = i * 2.399963, r = 26 + (i % 7) * 26 + (i % 3) * 11;
+  const x = Math.cos(a) * r, z = Math.sin(a) * r;
+  const s = 0.5 + ((i * 37) % 11) / 8;
+  const m = BABYLON.MeshBuilder.CreatePolyhedron('desertStone', { type: 2, size: s }, scene);
+  finish(m, 'desertStone', sandScape, stoneMat, [x, duneAt(x, z) + s * 0.35, z], [i * 0.7, i * 1.3, i * 0.4]);
+}
+const sandDome = BABYLON.MeshBuilder.CreateSphere('sandDome', { diameter: 900, segments: 24 }, scene);
+sandDome.material = skyMat; sandDome.parent = sandScape;
+sandDome.isPickable = false; sandDome.infiniteDistance = true;
+onSand(sandDome);
+
+// the far lighthouse: the only bearing there is
+const farTower = grp('farLighthouse', sandScape);
+farTower.position.set(-64, 0, -150);
+const farStone = pbr('farStone', 0xe6dcc4, 0.85, 0.02);
+const farCap = pbr('farCap', 0x2a251f, 0.6, 0.25);
+const farLampMat = pbr('farLamp', 0xfff0cd, 0.3, 0.0, { emissive: 0xffd694, emissiveIntensity: 2.8 });
+onSand(cyl(farTower, 'farPlinth', 6.4, 7.6, 2.6, farStone, [0, 1.3, 0], null, 24));
+onSand(cyl(farTower, 'farShaft', 3.2, 5.4, 26, farStone, [0, 15.3, 0], null, 32));
+onSand(cyl(farTower, 'farGallery', 4.6, 4.6, 0.7, farCap, [0, 28.6, 0], null, 32));
+onSand(cyl(farTower, 'farLanternGlass', 3.0, 3.0, 5.4, M.glass, [0, 31.6, 0], null, 24));
+onSand(sph(farTower, 'farLampGlow', 1.5, farLampMat, [0, 31.4, 0], 18));
+onSand(cone(farTower, 'farCapCone', 3.8, 3.6, farCap, [0, 36.0, 0], null, 24));
+const farBeams = [];
+const farBeacon = grp('farBeacon', farTower);
+farBeacon.position.set(0, 31.4, 0);
+for (const dir of [1, -1]) {
+  const b = BABYLON.MeshBuilder.CreateCylinder('farBeam', {
+    diameterTop: 5, diameterBottom: 26, height: 300, tessellation: 24,
+    cap: BABYLON.Mesh.CAP_ALL, sideOrientation: BABYLON.Mesh.DOUBLESIDE }, scene);
+  b.parent = farBeacon; b.material = beamMat.clone('farBeamMat' + farBeams.length); b.isPickable = false;
+  beamGrad(b, 300);
+  farBeams.push(b);
+  b.position.set(dir * 154, 0, 0);
+  b.rotationQuaternion = BABYLON.Quaternion.RotationYawPitchRoll(0, 0.02, dir * Math.PI / 2);
+  onSand(b);
+}
+
+// the boat you are aboard
+const rideHull = pbr('rideHull', 0x38302a, 0.72, 0.10, { double: true });
+const rideBoat = grp('rideBoat', sandScape);
+const rideDeck = grp('rideDeck', rideBoat);
+onSand(sph(rideDeck, 'rideHullBody', 1.30, rideHull, [0, -0.55, 0], 24)).scaling.set(2.35, 0.62, 0.86);
+for (const sz of [-1, 1])
+  onSand(box(rideDeck, 'rideGunwale', 5.6, 0.16, 0.16, rideHull, [0, 0.10, sz * 1.08], [0, sz * 0.04, 0]));
+for (let i = 0; i < 9; i++)
+  onSand(box(rideDeck, 'ridePlank', 0.44, 0.07, 2.10, rideHull, [-2.2 + i * 0.55, -0.02, 0]));
+onSand(box(rideDeck, 'rideTransom', 0.18, 0.70, 1.70, rideHull, [-2.85, 0.06, 0]));
+onSand(box(rideDeck, 'rideBowPost', 0.24, 0.86, 0.24, rideHull, [2.72, 0.30, 0], [0, 0, -0.22]));
+onSand(cyl(rideDeck, 'rideMast', 0.10, 0.15, 7.4, rideHull, [0.85, 3.6, 0], null, 12));
+onSand(cyl(rideDeck, 'rideBoom', 0.07, 0.07, 2.4, rideHull, [0.55, 1.16, 0], [0, 0, Math.PI / 2 - 0.08], 10));
+onSand(cyl(rideDeck, 'rideFurledSail', 0.16, 0.28, 2.3, pbr('rideSail', 0xa79c86, 0.95, 0), [0.55, 1.24, 0], [0, 0, Math.PI / 2 - 0.08], 12));
+onSand(cyl(rideDeck, 'rideTiller', 0.055, 0.07, 1.5, M.brass, [-2.25, 0.40, 0], [0, 0, Math.PI / 2 - 0.20], 8));
+onSand(sph(rideDeck, 'rideLamp', 0.13, pbr('rideLamp', 0xffe6b0, 0.4, 0, { emissive: 0xffab3a, emissiveIntensity: 2.4 }), [1.55, 0.42, 0], 12));
+for (const a of [[0.85, 7.1, 0], [2.6, 0.3, 0]]) void a;
+wire(rideDeck, 'rideForestay', [0.85, 7.1, 0], [2.62, 0.34, 0], 0.030, pbr('rideRig', 0x9c937d, 0.95, 0)).layerMask = SAND_LAYER;
+wire(rideDeck, 'rideBackstay', [0.85, 7.1, 0], [-2.70, 0.30, 0], 0.030, M.brass).layerMask = SAND_LAYER;
+// the cabin: a coachroof with a door left ajar, portholes lit from within
+const cabinLamp2 = pbr('cabinGlow', 0xffe3b4, 0.4, 0.0, { emissive: 0xffab4e, emissiveIntensity: 2.2 });
+const cabin = grp('rideCabin', rideDeck);
+box(cabin, 'coachRoofSide', 1.90, 0.92, 0.10, rideHull, [0.62, 0.58, 0.86]);
+box(cabin, 'coachRoofSide2', 1.90, 0.92, 0.10, rideHull, [0.62, 0.58, -0.86]);
+box(cabin, 'coachRoofFwd', 0.10, 0.92, 1.72, rideHull, [1.52, 0.58, 0]);
+box(cabin, 'coachRoofTop', 2.05, 0.10, 1.86, rideHull, [0.62, 1.06, 0]);
+box(cabin, 'coachRoofCoaming', 2.10, 0.07, 1.92, M.brass, [0.62, 1.12, 0]);
+box(cabin, 'cabinBulkhead', 0.10, 0.92, 1.72, rideHull, [-0.30, 0.58, 0]);
+box(cabin, 'cabinDoorFrame', 0.13, 0.80, 0.66, M.brass, [-0.31, 0.52, 0.10]);
+const cabinDoor = grp('cabinDoor', cabin);
+cabinDoor.position.set(-0.34, 0.52, -0.20);
+cabinDoor.rotation.y = -0.62;                    // ajar
+box(cabinDoor, 'cabinDoorLeaf', 0.06, 0.74, 0.56, rideHull, [0, 0, 0.28]);
+for (let i = 0; i < 4; i++)
+  box(cabinDoor, 'cabinDoorBatten', 0.075, 0.66, 0.055, M.brass, [0, 0, 0.09 + i * 0.13]);
+torus(cabinDoor, 'cabinDoorRing', 0.075, 0.016, M.brass, [0.05, -0.02, 0.50], [0, Math.PI / 2, 0], Math.PI * 2, 16);
+// the dark of the cabin, and its warm crack of light
+box(cabin, 'cabinInterior', 0.05, 0.72, 0.60, pbr('cabinDark', 0x0d0b09, 0.95, 0), [-0.26, 0.52, 0.10]);
+box(cabin, 'cabinDoorGlow', 0.03, 0.66, 0.10, cabinLamp2, [-0.245, 0.52, 0.38]);
+for (const sz of [1, -1]) {
+  cyl(cabin, 'porthole', 0.15, 0.15, 0.06, cabinLamp2, [0.55, 0.72, sz * 0.90], [Math.PI / 2, 0, 0], 18);
+  torus(cabin, 'portholeRing', 0.17, 0.030, M.brass, [0.55, 0.72, sz * 0.92], [0, Math.PI / 2, 0], Math.PI * 2, 20);
+}
+const cabinLight = new BABYLON.PointLight('cabinLight', V3(-0.10, 0.55, 0.30), scene);
+cabinLight.parent = cabin;
+cabinLight.diffuse = hexc(0xffab4e); cabinLight.range = 3.4; cabinLight.intensity = 0.5;
+
+// the log, open on its lectern by the helm
+const paperMat = pbr('logPaper', 0xe9e0c8, 0.95, 0.0, { double: true });
+const lectern = grp('rideLectern', rideDeck);
+lectern.position.set(-0.72, 0.36, -0.46);
+cyl(lectern, 'lecternPost', 0.055, 0.075, 0.72, rideHull, [0, 0.36, 0], null, 10);
+box(lectern, 'lecternRest', 0.52, 0.05, 0.44, rideHull, [0, 0.72, 0], [0, 0, -0.30]);
+box(lectern, 'logbookLeafL', 0.30, 0.015, 0.40, paperMat, [-0.10, 0.79, 0], [0, 0, -0.34]);
+box(lectern, 'logbookLeafR', 0.30, 0.015, 0.40, paperMat, [0.16, 0.71, 0], [0, 0, -0.26]);
+box(lectern, 'logbookSpine', 0.05, 0.05, 0.42, rideHull, [0.02, 0.755, 0], [0, 0, -0.30]);
+for (let i = 0; i < 7; i++)
+  box(lectern, 'logLine', 0.20, 0.006, 0.012, pbr('logInk', 0x3a3128, 0.9, 0), [-0.10, 0.80 + i * 0.0004, -0.14 + i * 0.045], [0, 0, -0.34]);
+cyl(lectern, 'logPencil', 0.012, 0.012, 0.22, M.brass, [0.20, 0.70, 0.16], [0, 0.5, Math.PI / 2 - 0.2], 8);
+
+// the wireless set on its shelf, with a signal key
+const radio = grp('rideRadio', rideDeck);
+radio.position.set(-1.62, 0.30, -0.86);
+box(radio, 'radioShelf', 0.62, 0.06, 0.52, rideHull, [0, 0.52, 0]);
+box(radio, 'radioCase', 0.46, 0.34, 0.40, pbr('radioCase', 0x4a3a2a, 0.7, 0.10), [0, 0.72, 0]);
+box(radio, 'radioFacePlate', 0.04, 0.28, 0.34, M.brass, [-0.23, 0.72, 0]);
+for (const sz of [-1, 1])
+  cyl(radio, 'radioDial', 0.055, 0.055, 0.035, M.brass, [-0.26, 0.78, sz * 0.10], [0, 0, Math.PI / 2], 16);
+cyl(radio, 'radioMeter', 0.045, 0.045, 0.03, pbr('radioMeter', 0xdfe6e6, 0.2, 0.05), [-0.26, 0.66, 0], [0, 0, Math.PI / 2], 16);
+cyl(radio, 'radioAerial', 0.014, 0.018, 1.30, M.brass, [0.14, 1.54, 0], null, 8);
+sph(radio, 'radioAerialTip', 0.030, M.brass, [0.14, 2.20, 0], 10);
+box(radio, 'radioKeyBase', 0.16, 0.04, 0.14, M.brass, [-0.02, 0.56, 0.30]);
+cyl(radio, 'radioKeyLever', 0.020, 0.020, 0.16, M.brass, [-0.02, 0.61, 0.30], [0, 0, Math.PI / 2 - 0.25], 8);
+sph(radio, 'radioKeyKnob', 0.035, pbr('radioKnob', 0x1d1a16, 0.6, 0.05), [-0.09, 0.645, 0.30], 10);
+wire(radio, 'radioCord', [-0.02, 0.58, 0.30], [-0.16, 0.56, 0.12], 0.010, M.brass).layerMask = SAND_LAYER;
+
+// the working clutter of a boat that has been out a long time
+for (let i = 0; i < 4; i++)
+  torus(rideDeck, 'ropeCoil', 0.24 - i * 0.035, 0.032, M.brass, [-1.85, 0.13 + i * 0.055, 0.72], [Math.PI / 2, 0, 0], Math.PI * 2, 20);
+cyl(rideDeck, 'deckBucket', 0.17, 0.20, 0.28, rideHull, [1.90, 0.24, -0.62], null, 14);
+torus(rideDeck, 'bucketHoop', 0.18, 0.018, M.brass, [1.90, 0.36, -0.62], [Math.PI / 2, 0, 0], Math.PI * 2, 16);
+box(rideDeck, 'deckCrate', 0.46, 0.34, 0.40, rideHull, [2.05, 0.27, 0.60], [0, 0.4, 0]);
+box(rideDeck, 'deckCrateLid', 0.50, 0.05, 0.44, M.brass, [2.05, 0.46, 0.60], [0, 0.4, 0]);
+// a lantern swinging from the boom
+const swingLantern = grp('boomLantern', rideDeck);
+swingLantern.position.set(-1.05, 0.70, 0);
+wire(swingLantern, 'lanternCord', [0, 0.32, 0], [0, 0, 0], 0.008, M.brass).layerMask = SAND_LAYER;
+cyl(swingLantern, 'lanternBody', 0.10, 0.12, 0.24, cabinLamp2, [0, -0.14, 0], null, 14);
+cyl(swingLantern, 'lanternCap', 0.13, 0.13, 0.05, M.brass, [0, -0.01, 0], null, 14);
+cyl(swingLantern, 'lanternFoot', 0.12, 0.12, 0.04, M.brass, [0, -0.27, 0], null, 14);
+
+// nothing of the desert belongs to the observatory's world
+for (const m of sandScape.getChildMeshes()) { m.layerMask = SAND_LAYER; m.receiveShadows = false; noCast(m); }
+
+// blowing sand
+const sandBlow = [];
+const blowMgr = new BABYLON.SpriteManager('blowMgr', puffURL, 40, { width: 64, height: 64 }, scene);
+blowMgr.blendMode = BABYLON.Engine.ALPHA_COMBINE;
+blowMgr.disableDepthWrite = true;
+blowMgr.layerMask = SAND_LAYER;              // desert sand belongs to the desert alone
+blowMgr.layerMask = SAND_LAYER;
+for (let i = 0; i < 34; i++) {
+  const sp = new BABYLON.Sprite('sandGust', blowMgr);
+  sp.color = new BABYLON.Color4(0.82, 0.72, 0.55, 0.30);
+  sandBlow.push({ sp, w: 6 + Math.random() * 12, h: 1.6 + Math.random() * 2.6,
+    d: 8 + Math.random() * 44, lat: (Math.random() - 0.5) * 46, y: 0.6 + Math.random() * 3.4,
+    ph: Math.random() * 6.283, sp2: 0.25 + Math.random() * 0.5 });
+}
+
+/* ---------- a sounding buoy riding the drawer's sea ---------- */
+const buoyHullMat = pbr('buoyHull', 0x9a4630, 0.62, 0.10);
+const buoyLampMat = pbr('buoyLamp', 0xffe6b0, 0.40, 0.0, { emissive: 0xffab3a, emissiveIntensity: 2.6 });
+const BUOY_X = 0.058, BUOY_Z = 0.252;
+const buoyG = grp('soundingBuoy', wd);
+buoyG.position.set(BUOY_X, -0.010, BUOY_Z);
+buoyG.scaling.setAll(1.05);
+const buoyTilt = grp('buoyTilt', buoyG);
+sph(buoyTilt, 'buoyFloat', 0.0130, buoyHullMat, [0, 0.0016, 0], 20);
+cyl(buoyTilt, 'buoyWaterline', 0.0132, 0.0132, 0.0026, M.brass, [0, 0.0016, 0], null, 20);
+cyl(buoyTilt, 'buoyDeck', 0.0086, 0.0100, 0.0030, M.brass, [0, 0.0126, 0], null, 18);
+cyl(buoyTilt, 'buoyMast', 0.0011, 0.0015, 0.0300, M.brass, [0, 0.0280, 0], null, 10);
+sph(buoyTilt, 'buoyLamp', 0.0034, buoyLampMat, [0, 0.0450, 0], 12);
+torus(buoyTilt, 'buoyLampCage', 0.0052, 0.0009, M.brass, [0, 0.0450, 0], [Math.PI / 2, 0, 0], Math.PI * 2, 16);
+cyl(buoyTilt, 'buoyFinial', 0.0006, 0.0006, 0.0075, M.brass, [0, 0.0500, 0], null, 8);
+for (let i = 0; i < 3; i++)
+  torus(buoyTilt, 'buoyReflector', 0.0048, 0.0007, M.brass, [0, 0.0340, 0],
+    [i === 0 ? 0 : Math.PI / 2, i === 2 ? Math.PI / 2 : 0, 0], Math.PI * 2, 14);
+for (let i = 0; i < 4; i++) {
+  const a = i * Math.PI / 2;
+  wire(buoyTilt, 'buoyShroud', [Math.cos(a) * 0.0090, 0.0140, Math.sin(a) * 0.0090], [0, 0.0400, 0], 0.00035);
+}
+cyl(buoyTilt, 'buoyKeel', 0.0104, 0.0032, 0.0140, M.iron, [0, -0.0072, 0], null, 18);
+cyl(buoyTilt, 'buoyBallast', 0.0044, 0.0044, 0.0060, M.brass, [0, -0.0170, 0], null, 12);
+// the mooring line paying out into the deep
+const tether = grp('buoyTether', buoyG);
+const tetherLinks = [];
+for (let i = 0; i < 9; i++)
+  tetherLinks.push(cyl(tether, 'tetherLink', 0.0004, 0.0004, 0.045 + i * 0.012, M.brass, [0, 0, 0], null, 5));
+const buoyWave = (x, z, ts, amp) => amp * (
+  Math.sin(x * 52 + ts * 3.0) * 0.0034 +
+  Math.sin(-(z - 0.229) * 38 - ts * 2.4) * 0.0026 +
+  Math.sin((x - (z - 0.229)) * 88 + ts * 4.6) * 0.0014);
+const buoyTick = (t, dt) => {
+  const S = SEA[WX.sea], ts = t * S.speed;
+  const hh = buoyWave(BUOY_X, BUOY_Z, ts, S.amp);
+  const hx2 = buoyWave(BUOY_X + 0.012, BUOY_Z, ts, S.amp);
+  const hz2 = buoyWave(BUOY_X, BUOY_Z + 0.012, ts, S.amp);
+  buoyG.position.y = -0.010 + hh;
+  buoyTilt.rotation.z = -(hx2 - hh) / 0.012 * 0.55;
+  buoyTilt.rotation.x = (hz2 - hh) / 0.012 * 0.55;
+  buoyG.rotation.y += dt * 0.10;
+  buoyLampMat.emissiveColor = hexc(0xffab3a).scale(1.2 + 1.8 * Math.pow(0.5 + 0.5 * Math.sin(t * 4.4), 3));
+  let y = -0.018, sx = 0, sz = 0;
+  for (let i = 0; i < tetherLinks.length; i++) {
+    const L = tetherLinks[i], len = 0.045 + i * 0.012, w = t * 0.7 + i * 0.9;
+    const nx = sx + Math.sin(w) * 0.004 * (i + 1) * 0.35, nz = sz + Math.cos(w * 0.8) * 0.003 * (i + 1) * 0.35;
+    const A = V3(sx, y, sz), B = V3(nx, y - len, nz);
+    L.position.copyFrom(A.add(B).scale(0.5));
+    L.rotationQuaternion = BABYLON.Quaternion.FromUnitVectorsToRef
+      ? BABYLON.Quaternion.FromUnitVectorsToRef(V3(0, 1, 0), B.subtract(A).normalize(), new BABYLON.Quaternion())
+      : L.rotationQuaternion;
+    y -= len; sx = nx; sz = nz;
+  }
+};
+
+/* ================= 파도의 방: the abyss under the drawer ================= */
+const ABYSS_D = 1.90;
+wd.getChildMeshes().forEach((m) => { if (m.name === 'drawerBottom' || m.name === 'drawerLiner') m.isVisible = false; });
+const abyss = grp('abyss', wd);
+abyss.position.set(0, -0.010, 0.229);
+
+const gradTex = (name, top, bottom, k) => {
+  const t = new BABYLON.DynamicTexture(name, { width: 4, height: 256 }, scene, false);
+  const c = t.getContext();
+  const g = c.createLinearGradient(0, 0, 0, 256);
+  for (let i = 0; i <= 8; i++) {
+    const u = i / 8, m = Math.pow(u, k);
+    const mix = (a, b) => Math.round(a + (b - a) * m);
+    g.addColorStop(u, 'rgb(' + mix(top[0], bottom[0]) + ',' + mix(top[1], bottom[1]) + ',' + mix(top[2], bottom[2]) + ')');
+  }
+  c.fillStyle = g; c.fillRect(0, 0, 4, 256);
+  t.update(false);
+  return t;
+};
+const wallMat = (name, tex) => {
+  const m = new BABYLON.StandardMaterial(name, scene);
+  m.emissiveTexture = tex;
+  m.diffuseColor = new BABYLON.Color3(0, 0, 0);
+  m.specularColor = new BABYLON.Color3(0, 0, 0);
+  m.disableLighting = true; m.backFaceCulling = false; m.fogEnabled = false;
+  return m;
+};
+const deepMat = wallMat('abyssWall', gradTex('abyssGrad', [61, 83, 100], [1, 3, 7], 0.5));
+const wellMat = wallMat('abyssWell', gradTex('wellGrad', [61, 83, 100], [1, 3, 6], 0.45));
+const shaftWalls = [], wellWalls = [];
+const wall = (list, mat, w, h, pos, rotY) => {
+  const p = BABYLON.MeshBuilder.CreatePlane('abyssWall', { width: w, height: h, sideOrientation: BABYLON.Mesh.DOUBLESIDE }, scene);
+  p.parent = abyss; p.material = mat;
+  p.position.set(pos[0], pos[1], pos[2]);
+  p.rotation.y = rotY; p.isPickable = false;
+  list.push(p); return p;
+};
+for (const [d, list, mat] of [[ABYSS_D, shaftWalls, deepMat], [0.105, wellWalls, wellMat]]) {
+  const cy = -d / 2;
+  wall(list, mat, 0.270, d, [0, cy, -0.094], 0);
+  wall(list, mat, 0.270, d, [0, cy, 0.094], Math.PI);
+  wall(list, mat, 0.188, d, [-0.135, cy, 0], -Math.PI / 2);
+  wall(list, mat, 0.188, d, [0.135, cy, 0], Math.PI / 2);
+  const floor = BABYLON.MeshBuilder.CreatePlane('abyssFloor', { width: 0.270, height: 0.188, sideOrientation: BABYLON.Mesh.DOUBLESIDE }, scene);
+  floor.parent = abyss; floor.material = mat; floor.rotation.x = -Math.PI / 2;
+  floor.position.set(0, -d + 0.001, 0); floor.isPickable = false;
+  list.push(floor);
+}
+// the surface seen from underneath
+const ceilMat = new BABYLON.StandardMaterial('abyssCeiling', scene);
+ceilMat.emissiveColor = hexc(0xa9c3cf).scale(0.92);
+ceilMat.diffuseColor = new BABYLON.Color3(0, 0, 0);
+ceilMat.specularColor = new BABYLON.Color3(0, 0, 0);
+ceilMat.disableLighting = true; ceilMat.backFaceCulling = false; ceilMat.alpha = 0.75;
+const ceilField = planeMesh(abyss, 'abyssCeiling', 0.268, 0.186, 22, 16, ceilMat, [0, -0.004, 0], [-Math.PI / 2, 0, 0], true);
+ceilField.mesh.isPickable = false;
+shaftWalls.push(ceilField.mesh);
+
+// daylight breaking in
+const rayTex = new BABYLON.DynamicTexture('rayTex', { width: 8, height: 128 }, scene, false);
+{
+  const rc = rayTex.getContext();
+  const rg = rc.createLinearGradient(0, 0, 0, 128);
+  rg.addColorStop(0, 'rgba(196,216,224,0.55)');
+  rg.addColorStop(0.45, 'rgba(150,178,192,0.16)');
+  rg.addColorStop(1, 'rgba(120,150,166,0)');
+  rc.fillStyle = rg; rc.fillRect(0, 0, 8, 128);
+  rayTex.update(false);
+  rayTex.hasAlpha = true;
+}
+const rayMat = new BABYLON.StandardMaterial('abyssRay', scene);
+rayMat.emissiveTexture = rayTex; rayMat.opacityTexture = rayTex;
+rayMat.diffuseColor = new BABYLON.Color3(0, 0, 0);
+rayMat.specularColor = new BABYLON.Color3(0, 0, 0);
+rayMat.disableLighting = true; rayMat.backFaceCulling = false;
+rayMat.disableDepthWrite = true; rayMat.alphaMode = BABYLON.Engine.ALPHA_ADD; rayMat.fogEnabled = false;
+const rays = [];
+for (let i = 0; i < 5; i++) {
+  const w = 0.020 + Math.random() * 0.030, hh = 0.42 + Math.random() * 0.34;
+  const p = BABYLON.MeshBuilder.CreatePlane('abyssRay', { width: w, height: hh, sideOrientation: BABYLON.Mesh.DOUBLESIDE }, scene);
+  p.parent = abyss; p.material = rayMat; p.isPickable = false;
+  p.position.set(-0.09 + i * 0.045, -hh / 2 - 0.004, -0.05 + Math.random() * 0.10);
+  p.rotation.set(0, Math.random() * Math.PI, 0.14 * (Math.random() - 0.5));
+  rays.push({ m: p, ph: Math.random() * 6.283 });
+  shaftWalls.push(p);
+}
+// marine snow rising
+const MOTES = 700;
+const moteMat = new BABYLON.StandardMaterial('marineSnow', scene);
+moteMat.emissiveTexture = flakeTex; moteMat.opacityTexture = flakeTex;
+moteMat.diffuseColor = new BABYLON.Color3(0, 0, 0);
+moteMat.specularColor = new BABYLON.Color3(0, 0, 0);
+moteMat.disableLighting = true; moteMat.backFaceCulling = false;
+moteMat.disableDepthWrite = true; moteMat.alpha = 0.55; moteMat.fogEnabled = false;
+const mp = new Float32Array(MOTES * 3), mv = new Float32Array(MOTES), mph = new Float32Array(MOTES);
+for (let i = 0; i < MOTES; i++) {
+  mp[i * 3] = (Math.random() - 0.5) * 0.255;
+  mp[i * 3 + 1] = -Math.random() * ABYSS_D;
+  mp[i * 3 + 2] = (Math.random() - 0.5) * 0.175;
+  mv[i] = 0.004 + Math.random() * 0.016;
+  mph[i] = Math.random() * 6.283;
+}
+const motePos = new Float32Array(MOTES * 12);
+let motes;
+{
+  const idx = [], uv = [];
+  for (let i = 0; i < MOTES; i++) {
+    const o = i * 4;
+    idx.push(o, o + 1, o + 2, o, o + 2, o + 3);
+    uv.push(0, 0, 1, 0, 1, 1, 0, 1);
+  }
+  const vd = new BABYLON.VertexData();
+  vd.positions = motePos; vd.indices = idx; vd.uvs = uv;
+  vd.normals = new Float32Array(MOTES * 12);
+  for (let i = 0; i < MOTES * 4; i++) vd.normals[i * 3 + 2] = 1;
+  motes = new BABYLON.Mesh('marineSnow', scene);
+  vd.applyToMesh(motes, true);
+  motes.material = moteMat; motes.parent = abyss;
+  motes.isPickable = false; motes.alwaysSelectAsActiveMesh = true;
+  shaftWalls.push(motes);
+}
+// things passing in the dark
+const shadeMat = new BABYLON.StandardMaterial('abyssShade', scene);
+shadeMat.emissiveColor = hexc(0x03060b);
+shadeMat.diffuseColor = new BABYLON.Color3(0, 0, 0);
+shadeMat.specularColor = new BABYLON.Color3(0, 0, 0);
+shadeMat.disableLighting = true; shadeMat.fogEnabled = false;
+const shades = [];
+for (let i = 0; i < 4; i++) {
+  const s = BABYLON.MeshBuilder.CreateSphere('abyssShade', { diameter: 2, segments: 18 }, scene);
+  s.parent = abyss; s.material = shadeMat; s.isPickable = false;
+  s.scaling.set(0.085 + Math.random() * 0.055, 0.016 + Math.random() * 0.012, 0.030 + Math.random() * 0.020);
+  s.position.y = -0.62 - i * 0.36;
+  shades.push({ s, y: s.position.y, ph: Math.random() * 6.283, sp: 0.10 + Math.random() * 0.16, dir: i % 2 ? 1 : -1 });
+  shaftWalls.push(s);
+}
+const glowMat = new BABYLON.StandardMaterial('abyssGlow', scene);
+glowMat.emissiveColor = hexc(0x1d425e);
+glowMat.diffuseColor = new BABYLON.Color3(0, 0, 0);
+glowMat.specularColor = new BABYLON.Color3(0, 0, 0);
+glowMat.disableLighting = true; glowMat.alpha = 0.42;
+glowMat.alphaMode = BABYLON.Engine.ALPHA_ADD; glowMat.disableDepthWrite = true; glowMat.fogEnabled = false;
+const deepGlow = sph(abyss, 'abyssGlow', 0.13, glowMat, [0, -ABYSS_D + 0.20, 0], 18);
+deepGlow.isPickable = false;
+noCast(deepGlow);
+shaftWalls.push(deepGlow);
+// a wooden pan closes the shallow well, so from below the desk shows timber, not water
+const wellPan = BABYLON.MeshBuilder.CreateBox('abyssWellPan', { width: 0.272, height: 0.010, depth: 0.190 }, scene);
+wellPan.parent = abyss; wellPan.material = M.caseWood;
+wellPan.position.set(0, -0.108, 0);
+wellPan.isPickable = false; wellPan.receiveShadows = true;
+wellWalls.push(wellPan);
+for (const m of shaftWalls) { m.isVisible = false; noCast(m); }
+for (const m of wellWalls) { noCast(m); m.isVisible = (m.name === 'abyssWellPan'); }
+
+/* ================= entering and leaving the rooms ================= */
+let sandRide = false, sandBusy = false, diveMode = false, diveBusy = false;
+const swim = { f: 0, up: 0 };
+const roomHome = { pos: BABYLON.Vector3.Zero(), tgt: BABYLON.Vector3.Zero(), fov: camera.fov };
+const saveHome = () => {
+  roomHome.pos.copyFrom(camera.position);
+  roomHome.tgt.copyFrom(camera.getTarget());
+  roomHome.fov = camera.fov;
+};
+const restoreHome = () => {
+  camera.fov = roomHome.fov;
+  camera.setTarget(roomHome.tgt);
+  camera.setPosition(roomHome.pos);
+  camera.attachControl(canvas, true);
+};
+const anyRoom = () => towerMode || sandRide || diveMode;
+const busy = () => towerBusy || sandBusy || diveBusy || !!fly;
+
+// --- 사막의 방 ---
+const helm = { x: 0, z: 0, head: 0.6, steer: 0, speed: 1.35 };
+const installSandRide = () => {
+  sandRide = true;
+  if (window.recordVoice) window.recordVoice('fog');
+  helm.x = 0; helm.z = 0; helm.head = 0.6; helm.steer = 0;
+  look.yaw = 0; look.pitch = 0;
+  roomCam.layerMask = SAND_LAYER;
+  scene.activeCamera = roomCam;
+  rtt.refreshRate = 0;
+  scene.fogStart = 70; scene.fogEnd = 430;
+  exitBtn.textContent = '관측소로 돌아가기';
+  exitBtn.classList.add('show');
+  veil.style.opacity = '0';
+  sandBusy = false;
+};
+const enterSand = (hit) => {
+  if (anyRoom() && !towerMode) return;
+  if (busy()) return;
+  sandBusy = true;
+  const go = () => {
+    if (towerMode) { towerMode = false; }
+    installSandRide();
+  };
+  if (towerMode) { veil.style.opacity = '1'; setTimeout(go, 380); return; }
+  saveHome();
+  const to = hit.clone(), from = camera.position.clone();
+  flyTo(to.add(from.subtract(to).scale(0.16)), to, 1.8,
+    { fov: 14 * Math.PI / 180, veil: true, onDone: () => { camera.fov = 45 * Math.PI / 180; installSandRide(); } });
+};
+
+// --- 파도의 방 (the deep) ---
+const installDive = () => {
+  diveMode = true;
+  look.yaw = 0; look.pitch = -0.55;
+  roomCam.layerMask = 0x0FFFFFFF;
+  scene.activeCamera = roomCam;
+  for (const m of shaftWalls) m.isVisible = true;
+  for (const m of wellWalls) m.isVisible = false;
+  exitBtn.textContent = '수면으로 오르기';
+  exitBtn.classList.add('show');
+  veil.style.opacity = '0';
+  diveBusy = false;
+};
+const diveSeat = new BABYLON.Vector3();
+const enterDive = (hit) => {
+  if (anyRoom() && !towerMode) return;
+  if (busy()) return;
+  if (window.recordVoice) window.recordVoice('wave');
+  diveBusy = true;
+  wd.computeWorldMatrix(true);
+  const wm = wd.getWorldMatrix();
+  diveSeat.copyFrom(BABYLON.Vector3.TransformCoordinates(V3(0, -0.10, 0.229), wm));
+  const go = () => {
+    if (towerMode) towerMode = false;
+    towerSeat.copyFrom(diveSeat);
+    towerFwd.copyFrom(V3(0.08, -0.92, 0.10).normalize());
+    installDive();
+    aimRoomCam();
+  };
+  if (towerMode) { veil.style.opacity = '1'; setTimeout(go, 420); return; }
+  saveHome();
+  const surface = BABYLON.Vector3.TransformCoordinates(V3(0, -0.006, 0.229), wm);
+  const above = surface.add(V3(0.03, 0.20, 0.16));
+  flyTo(above, surface, 1.1, { onDone: () => {
+    flyTo(surface.add(V3(0.004, -0.02, 0.010)), surface.add(V3(0.004, -0.30, 0.010)), 1.5,
+      { veil: true, onDone: go });
+  }});
+};
+const leaveRoom = () => {
+  if (busy() || !anyRoom()) return;
+  if (towerMode) { leaveTower(); return; }
+  const wasDive = diveMode;
+  if (wasDive) diveBusy = true; else sandBusy = true;
+  veil.style.opacity = '1';
+  setTimeout(() => {
+    diveMode = false; sandRide = false;
+    for (const m of shaftWalls) m.isVisible = false;
+    for (const m of wellWalls) m.isVisible = (m.name === 'abyssWellPan');
+    roomCam.layerMask = SEA_LAYER;
+    scene.fogStart = 30; scene.fogEnd = 210;
+    restoreObservatory();
+    restoreHome();
+    veil.style.opacity = '0';
+    diveBusy = false; sandBusy = false;
+  }, 380);
+};
+window.enterSandRoom = () => {
+  const wm = fogRoom.getWorldMatrix();
+  enterSand(BABYLON.Vector3.TransformCoordinates(V3(0, 0.06, 0), wm));
+};
+window.enterDeepRoom = () => enterDive();
+window.leaveRoom = leaveRoom;
+
+/* ================= 유리 안의 날씨: making the state, then watching what follows ================= */
+// the cloud's shape is never set directly — it is what the answers add up to
+const CS = { size: 0.42, dens: 0.42, count: 0, fall: 2, speed: 0.4 };
+const CSN = { size: 0.42, dens: 0.42, speed: 0.4 };
+let cloudCycle = false;
+const MATES = [0, 2, 4];
+const LOADS = [
+  ['해야 할 일과 책임', '해야 할 일과 책임'],
+  ['아직 해결되지 않은 걱정', '해결되지 않은 걱정'],
+  ['다른 사람과의 관계나 기대', '다른 사람의 기대'],
+  ['말하지 못한 감정', '말하지 못한 감정'],
+  ['몸의 피로나 불편함', '몸의 피로'],
+  ['잃어버렸거나 끝난 것', '잃어버린 것'],
+  ['무엇 때문인지 아직 모르겠다', '아직 모르는 것'],
+];
+const KNITS = [
+  ['모두 한데 얽혀 있다', '한데 얽혀'],
+  ['각각 따로 느껴진다', '각각 따로'],
+  ['잘 모르겠다', '아직 갈피를 잡지 못한 채'],
+];
+const FLOWS = [
+  ['조금씩 쌓인다', '조금씩 쌓입니다', 1],
+  ['한꺼번에 쏟아진다', '한꺼번에 쏟아집니다', 2],
+  ['안에서 계속 머문다', '안에서 계속 머뭅니다', 0],
+  ['그때마다 달라진다', '그때마다 달라집니다', 3],
+  ['잘 모르겠다', '어떻게 이어지는지는 아직 모릅니다', -1],
+];
+const REACTS = [
+  ['더 바쁘게 움직인다', '더 바쁘게 움직입니다'],
+  ['같은 생각을 계속 반복한다', '같은 생각을 계속 반복합니다'],
+  ['다른 일에 몰두한다', '다른 일에 몰두합니다'],
+  ['아무렇지 않은 척한다', '아무렇지 않은 척합니다'],
+  ['사람들에게서 멀어진다', '사람들에게서 멀어집니다'],
+  ['누군가에게 이야기한다', '누군가에게 이야기합니다'],
+  ['아무것도 하지 못한다', '아무것도 하지 못합니다'],
+];
+const SHIFTS = [
+  ['줄어든다', '줄어듭니다', { size: -0.16, dens: -0.14 }, '줄어들지만'],
+  ['그대로다', '그대로입니다', {}, '그대로지만'],
+  ['더 무거워진다', '더 무거워집니다', { size: 0.16, dens: 0.13 }, '더 무거워지지만'],
+  ['다른 상태가 된다', '다른 상태가 됩니다', { count: 1, flip: 1 }, '다른 상태가 되지만'],
+  ['잘 모르겠다', '잘 모르겠습니다', { dens: -0.06 }, '잘 모르겠지만'],
+];
+// 이/가 by the last syllable's final consonant
+const subj = (w) => {
+  const c = (w || '').charCodeAt((w || '').length - 1);
+  if (c >= 0xac00 && c <= 0xd7a3) return ((c - 0xac00) % 28) !== 0 ? '이' : '가';
+  return '가';
+};
+const OUTCOMES = [
+  ['당장은 줄지만 다시 커진다', '당장 줄어들지만 시간이 지나면 다시 커집니다', 'rebound'],
+  ['계속 줄어든다', '계속 줄어듭니다', 'fade'],
+  ['별로 달라지지 않는다', '별로 달라지지 않습니다', 'hold'],
+  ['오히려 더 커진다', '오히려 더 커집니다', 'grow'],
+  ['그때마다 다르다', '그때마다 다릅니다', 'vary'],
+  ['잘 모르겠다', '어떻게 되는지는 아직 잘 모르겠습니다', 'hold'],
+];
+const A = { load: [], react: [], out: -1 };
+let cloudStep = 0, cloudMode = false, cloudBusy = false;
+
+const CLOUD_SOFT = hexc(0xf4f2ec), CLOUD_GUARD = hexc(0x9aa3ad);
+const jarCloudMat = pbr('jarCloud', 0xf4f2ec, 1.0, 0.0, { alpha: 1, double: true });
+cloudMesh.material = jarCloudMat;
+const cloudMates = [];
+for (let i = 0; i < 4; i++) {
+  const m = cloudMesh.clone('cloudMate' + i);        // the same body, so they breathe together
+  m.parent = cloudG; m.material = jarCloudMat; m.isVisible = false; m.isPickable = false;
+  noCast(m);
+  const a = i * 1.42, rr = 0.030 + 0.007 * (i % 2);
+  m.metadata = { base: V3(Math.cos(a) * rr, -0.003 + 0.009 * Math.sin(a * 1.7), Math.sin(a) * rr), w: 0 };
+  cloudMates.push(m);
+}
+// what falls inside the glass
+const JR = 240;
+const jarFallMat = new BABYLON.StandardMaterial('jarFall', scene);
+jarFallMat.emissiveTexture = flakeTex; jarFallMat.opacityTexture = flakeTex;
+jarFallMat.diffuseColor = new BABYLON.Color3(0, 0, 0);
+jarFallMat.specularColor = new BABYLON.Color3(0, 0, 0);
+jarFallMat.disableLighting = true; jarFallMat.backFaceCulling = false;
+jarFallMat.disableDepthWrite = true; jarFallMat.alpha = 0; jarFallMat.fogEnabled = false;
+const jrp = new Float32Array(JR * 3), jrv = new Float32Array(JR);
+for (let i = 0; i < JR; i++) {
+  const a = Math.random() * Math.PI * 2, rr = Math.sqrt(Math.random()) * 0.046;
+  jrp[i * 3] = Math.cos(a) * rr;
+  jrp[i * 3 + 1] = -0.024 + Math.random() * 0.076;
+  jrp[i * 3 + 2] = Math.sin(a) * rr;
+  jrv[i] = 0.020 + Math.random() * 0.026;
+}
+const jarFallPos = new Float32Array(JR * 12);
+let jarFall;
+{
+  const idx = [], uv = [];
+  for (let i = 0; i < JR; i++) {
+    const o = i * 4;
+    idx.push(o, o + 1, o + 2, o, o + 2, o + 3);
+    uv.push(0, 0, 1, 0, 1, 1, 0, 1);
+  }
+  const vd = new BABYLON.VertexData();
+  vd.positions = jarFallPos; vd.indices = idx; vd.uvs = uv;
+  vd.normals = new Float32Array(JR * 12);
+  for (let i = 0; i < JR * 4; i++) vd.normals[i * 3 + 2] = 1;
+  jarFall = new BABYLON.Mesh('jarFall', scene);
+  vd.applyToMesh(jarFall, true);
+  jarFall.material = jarFallMat; jarFall.parent = jarG;
+  jarFall.position.set(0, 0.030, 0);
+  jarFall.isPickable = false; jarFall.alwaysSelectAsActiveMesh = true;
+  noCast(jarFall);
+}
+
+/* ---------- one question at a time, floating over the glass ---------- */
+const cloudUI = document.createElement('div');
+cloudUI.id = 'cloudui';
+document.body.appendChild(cloudUI);
+const cloudStyle = document.createElement('style');
+cloudStyle.textContent =
+  '#cloudui{position:fixed;left:50%;bottom:8vh;transform:translate(-50%,12px);z-index:5;' +
+  'display:none;flex-direction:column;gap:16px;align-items:center;text-align:center;' +
+  'max-width:min(640px,90vw);opacity:0;transition:opacity .55s ease,transform .55s ease;' +
+  'text-shadow:0 1px 14px rgba(2,6,12,.85)}' +
+  '#cloudui.show{display:flex}#cloudui.asking{opacity:1;transform:translate(-50%,0)}' +
+  '#cloudui .said{margin:0;font-family:var(--font-heading,\'Cormorant Garamond\',Georgia,serif);' +
+  'font-size:26px;line-height:1.5;color:#f4efe4}' +
+  '#cloudui .ask{margin:0;font-family:var(--font-body,Lora,Georgia,serif);font-size:11px;' +
+  'letter-spacing:.18em;color:rgba(216,187,132,.9)}' +
+  '#cloudui .opts{display:flex;flex-wrap:wrap;gap:9px;justify-content:center}' +
+  '#cloudui button{font-family:var(--font-body,Lora,Georgia,serif);font-size:12.5px;letter-spacing:.05em;' +
+  'padding:9px 15px;border-radius:4px;cursor:pointer;background:rgba(10,14,20,.42);' +
+  'border:1px solid rgba(182,130,53,.55);color:#ece3cf;transition:background .2s ease,border-color .2s ease}' +
+  '#cloudui button:hover{background:rgba(182,130,53,.20);border-color:#b68235}' +
+  '#cloudui button.on{background:rgba(182,130,53,.30);border-color:#d8bb84;color:#fbeecd}' +
+  '#cloudui button[disabled]{opacity:.35;cursor:default}' +
+  '#cloudui .mine{display:none;gap:8px;justify-content:center}#cloudui.writing .mine{display:flex}' +
+  '#cloudui input[type=text]{font-family:var(--font-body,Lora,Georgia,serif);font-size:12.5px;' +
+  'padding:9px 13px;border-radius:4px;width:min(300px,62vw);background:rgba(8,12,16,.6);' +
+  'border:1px solid rgba(182,130,53,.45);color:#efe6d4;outline:none}' +
+  '#cloudui .back button{background:transparent;border-color:rgba(182,130,53,.32);' +
+  'color:rgba(216,187,132,.75);font-size:11px;letter-spacing:.14em;padding:6px 12px}' +
+  '#cloudui .rec{margin:0;font-family:var(--font-heading,\'Cormorant Garamond\',Georgia,serif);' +
+  'font-size:22px;line-height:1.55;color:#f4efe4;text-align:left;display:inline-block}' +
+  '#cloudui .step{margin:2px 0 0;font-family:var(--font-body,Lora,Georgia,serif);font-size:10px;' +
+  'letter-spacing:.24em;color:rgba(216,187,132,.55)}' +
+  '#cloudui .ghost{background:transparent;border-color:rgba(182,130,53,.32);' +
+  'color:rgba(216,187,132,.72)}' +
+  '#cloudui .lab{display:block;margin:12px 0 2px;font-family:var(--font-body,Lora,Georgia,serif);' +
+  'font-size:10px;letter-spacing:.20em;color:rgba(216,187,132,.82)}' +
+  '#cloudui .rec .lab:first-child{margin-top:0}';
+document.head.appendChild(cloudStyle);
+
+const chips = (list, key, sel, own) =>
+  '<div class="opts">' + list.map((it, i) => {
+    const label = Array.isArray(it) ? it[0] : it;
+    const on = Array.isArray(sel) ? sel.includes(i) : sel === i;
+    return '<button data-' + key + '="' + i + '"' + (on ? ' class="on"' : '') + '>' + label + '</button>';
+  }).join('') +
+  (own ? '<button data-own="1">내 말로 적기</button>' : '') + '</div>' +
+  (own ? '<div class="mine"><input type="text" data-input="' + key + '" placeholder="내 말로 적기" maxlength="40"><button data-add="' + key + '">담기</button></div>' : '');
+
+const ownWords = { load: [], react: [] };
+const loadNames = () => A.load.map((i) => LOADS[i][1]).concat(ownWords.load);
+const reactNames = () => A.react.map((i) => REACTS[i][1]).concat(ownWords.react.map((w) => w));
+
+const renderStep = () => {
+  if (cloudStep === 0) {
+    cloudUI.innerHTML = '<p class="said">지금 내 상태에 영향을 주고 있는 것은<br>무엇인가요?</p>' +
+      '<p class="ask">가까운 것을 모두 골라보세요</p>' + chips(LOADS, 'load', A.load, true) +
+      '<div class="opts"><button data-go="1"' + (A.load.length + ownWords.load.length ? '' : ' disabled') + '>다음</button></div>' +
+      '<p class="step">1 / 3</p>';
+  } else if (cloudStep === 1) {
+    cloudUI.innerHTML = '<p class="said">이것들의 영향을 받을 때<br>나는 주로 어떻게 하나요?</p>' +
+      '<p class="ask">가까운 것을 모두 골라보세요</p>' + chips(REACTS, 'react', A.react, true) +
+      '<div class="opts"><button data-go="2"' + (A.react.length + ownWords.react.length ? '' : ' disabled') + '>다음</button></div>' +
+      '<p class="step">2 / 3</p>';
+  } else if (cloudStep === 2) {
+    cloudUI.innerHTML = '<p class="said">그렇게 했을 때<br>보통 어떻게 되나요?</p>' +
+      chips(OUTCOMES, 'out', A.out, false) + '<p class="step">3 / 3</p>';
+  } else {
+    const names = loadNames();
+    const joined = names.length > 1
+      ? names.slice(0, -1).join(', ') + '과 ' + names[names.length - 1]
+      : names[0];
+    const react = reactNames().join(', ');
+    cloudUI.innerHTML = '<p class="ask">관측 기록</p>' +
+      '<p class="rec">' + joined + '의 영향을 받을 때 ' + react + '며,<br>' +
+      '그 영향은 ' + (A.out >= 0 ? OUTCOMES[A.out][1] : '') + '.</p>' +
+      '<div class="opts"><button data-done="1">관측 마치기</button>' +
+      '<button class="ghost" data-again="1">다른 반응 시험하기</button></div>';
+  }
+  if (cloudStep > 0 && cloudStep < 3)
+    cloudUI.innerHTML += '<div class="opts back"><button data-go="' + (cloudStep - 1) + '">이전 질문</button></div>';
+  cloudUI.classList.add('show');
+  requestAnimationFrame(() => cloudUI.classList.add('asking'));
+};
+
+const pickOne = (key, i, next) => { A[key] = i; applyAnswers(); cloudStep = next; renderStep(); };
+cloudUI.addEventListener('click', (e) => {
+  const t2 = e.target;
+  const multi = (key) => {
+    const b = t2.closest('button[data-' + key + ']');
+    if (!b) return false;
+    const i = +b.dataset[key], at = A[key].indexOf(i);
+    if (at >= 0) A[key].splice(at, 1); else A[key].push(i);
+    applyAnswers(); renderStep(); return true;
+  };
+  if (t2.closest('button[data-own]')) {
+    cloudUI.classList.add('writing');
+    const f = cloudUI.querySelector('input[data-input]');
+    if (f) f.focus();
+    return;
+  }
+  const add = t2.closest('button[data-add]');
+  if (add) {
+    const f = cloudUI.querySelector('input[data-input]');
+    const v = f && f.value.trim();
+    if (v) { ownWords[add.dataset.add].push(v); cloudUI.classList.remove('writing'); applyAnswers(); renderStep(); }
+    return;
+  }
+  if (t2.closest('button[data-done]')) { leaveCloud(); return; }
+  if (t2.closest('button[data-again]')) {
+    A.react = []; A.out = -1; ownWords.react = [];
+    cloudStep = 1; applyAnswers(); renderStep(); return;
+  }
+  const go = t2.closest('button[data-go]');
+  if (go) { cloudStep = +go.dataset.go; renderStep(); return; }
+  if (multi('load') || multi('react')) return;
+  const k = t2.closest('button[data-knit]');
+  if (k) { pickOne('knit', +k.dataset.knit, 2); return; }
+  const fl = t2.closest('button[data-flow]');
+  if (fl) { pickOne('flow', +fl.dataset.flow, 3); return; }
+  const af = t2.closest('button[data-after]');
+  if (af) { pickOne('after', +af.dataset.after, 5); return; }
+  const la = t2.closest('button[data-later]');
+  if (la) { pickOne('later', +la.dataset.later, 6); return; }
+});
+cloudUI.addEventListener('keydown', (e) => {
+  if (e.key !== 'Enter') return;
+  const f = e.target.closest('input[data-input]');
+  if (!f) return;
+  const v = f.value.trim();
+  if (v) { ownWords[f.dataset.input].push(v); cloudUI.classList.remove('writing'); applyAnswers(); renderStep(); }
+});
+
+/* ---------- coming close to the glass, and stepping back ---------- */
+const enterCloud = () => {
+  if (anyRoom() || cloudMode || busy() || cloudBusy) return;
+  cloudBusy = true;
+  saveHome();
+  jarG.computeWorldMatrix(true);
+  const c = BABYLON.Vector3.TransformCoordinates(V3(0, 0.075, 0), jarG.getWorldMatrix());
+  const eye = c.add(V3(0.055, 0.045, 0.180));
+  flyTo(eye, c, 1.6, { onDone: () => {
+    cloudMode = true; cloudBusy = false;
+    cloudStep = 0;
+    A.load = []; A.react = []; A.out = -1; cloudCycle = false;
+    ownWords.load = []; ownWords.react = [];
+    CS.size = 0.42; CS.dens = 0.42; CS.count = 0; CS.fall = 2; CS.speed = 0.4;
+    renderStep();
+    exitBtn.textContent = '관측소로 돌아가기';
+    exitBtn.classList.add('show');
+  }});
+};
+const leaveCloud = () => {
+  if (!cloudMode || cloudBusy) return;
+  cloudBusy = true;
+  cloudUI.classList.remove('asking');
+  setTimeout(() => {
+    cloudUI.classList.remove('show', 'writing');
+    cloudMode = false; cloudBusy = false;
+    exitBtn.classList.remove('show');
+    restoreHome();
+  }, 420);
+};
+window.enterCloud = enterCloud;
+window.leaveCloud = leaveCloud;
+
+const cloudTick = (t, dt) => {
+  const k = Math.min(1, dt * 2.2);
+  CSN.size += (CS.size - CSN.size) * k;
+  CSN.dens += (CS.dens - CSN.dens) * k;
+  CSN.speed += (CS.speed - CSN.speed) * k;
+  cloudG.scaling.setAll(0.70 + 0.80 * CSN.size);
+  const wantMates = MATES[CS.count];
+  for (let i = 0; i < cloudMates.length; i++) {
+    const m = cloudMates[i], md = m.metadata;
+    md.w += ((i < wantMates ? 1 : 0) - md.w) * Math.min(1, dt * 3.0);
+    m.isVisible = md.w > 0.02;
+    if (m.isVisible) {
+      const w = md.w, sw = 0.35 + 0.45 * w;
+      const pack = 1 - 0.55 * CSN.size;          // crowded together once the jar is full
+      m.position.set(md.base.x * w * pack, md.base.y * w * pack, md.base.z * w * pack);
+      m.scaling.set(sw * 1.05, sw * 0.78, sw * 0.98);
+      m.rotation.y = t * 0.10 * (i % 2 ? 1 : -1);
+    }
+  }
+  jarCloudMat.alpha = 0.32 + 0.68 * CSN.dens;
+  jarCloudMat.baseColor = BABYLON.Color3.Lerp(CLOUD_SOFT, CLOUD_GUARD, 0.10 + 0.50 * CSN.dens);
+  cloudG.rotation.y += dt * (0.06 + 0.34 * CSN.speed);
+  if (cloudCycle) {                             // eases down, then swells back
+    const w = 0.5 - 0.5 * Math.cos(t * 0.26);
+    cloudG.scaling.scaleInPlace(1 + 0.16 * (w - 0.5) * 0.001);
+  }
+  // snow settles slowly; rain runs down; neither means it stays inside
+  const eff = CS.fall === 3 ? (Math.sin(t * 0.33) > 0 ? 1 : 2) : CS.fall;
+  const isRain = eff === 2, falling = eff !== 0;
+  jarFallMat.alpha += ((falling ? (isRain ? 0.52 : 0.46) : 0) - jarFallMat.alpha) * Math.min(1, dt * 1.8);
+  jarFall.isVisible = jarFallMat.alpha > 0.02;
+  if (jarFall.isVisible) {
+    const v = (isRain ? 3.2 : 0.85) * (0.35 + 1.5 * CSN.speed);
+    for (let i = 0; i < JR; i++) {
+      jrp[i * 3 + 1] -= jrv[i] * dt * v;
+      if (!isRain) jrp[i * 3] += Math.sin(t * 1.4 + i) * 0.00004;
+      if (jrp[i * 3 + 1] < -0.026) {
+        const a = Math.random() * Math.PI * 2, rr = Math.sqrt(Math.random()) * 0.048;
+        jrp[i * 3] = Math.cos(a) * rr; jrp[i * 3 + 1] = 0.052; jrp[i * 3 + 2] = Math.sin(a) * rr;
+      }
+    }
+    const wm = scene.activeCamera.getWorldMatrix();
+    const q = isRain ? 0.0011 : 0.0019;
+    const rx = wm.m[0] * q, ry = wm.m[1] * q, rz = wm.m[2] * q;
+    const ux = wm.m[4] * q * (isRain ? 2.6 : 1), uy = wm.m[5] * q * (isRain ? 2.6 : 1), uz = wm.m[6] * q * (isRain ? 2.6 : 1);
+    for (let i = 0; i < JR; i++) {
+      const o = i * 3, p = i * 12;
+      const x = jrp[o], y = jrp[o + 1], z = jrp[o + 2];
+      jarFallPos[p] = x - rx - ux; jarFallPos[p + 1] = y - ry - uy; jarFallPos[p + 2] = z - rz - uz;
+      jarFallPos[p + 3] = x + rx - ux; jarFallPos[p + 4] = y + ry - uy; jarFallPos[p + 5] = z + rz - uz;
+      jarFallPos[p + 6] = x + rx + ux; jarFallPos[p + 7] = y + ry + uy; jarFallPos[p + 8] = z + rz + uz;
+      jarFallPos[p + 9] = x - rx + ux; jarFallPos[p + 10] = y - ry + uy; jarFallPos[p + 11] = z - rz + uz;
+    }
+    jarFall.updateVerticesData(BABYLON.VertexBuffer.PositionKind, jarFallPos);
+  }
+};
+
+/* ---------- the recorder's own hand ---------- */
+let chartX = 0, chartLast = -1, chartT = 0, chartPrev = '';
+const chartRule = (x0, x1) => {
+  chartCtx.fillStyle = '#eee7d4';
+  chartCtx.fillRect(x0, 0, x1 - x0, 256);
+  chartCtx.strokeStyle = 'rgba(150,126,96,0.22)';
+  chartCtx.lineWidth = 1;
+  for (let i = 1; i < 6; i++) {
+    chartCtx.beginPath();
+    chartCtx.moveTo(x0, i * 256 / 6);
+    chartCtx.lineTo(x1, i * 256 / 6);
+    chartCtx.stroke();
+  }
+};
+chartRule(0, 1024);
+const chartTick = (t, dt) => {
+  chartT += dt;
+  if (chartT < 0.09) return;                     // the drum turns slowly
+  chartT = 0;
+  const S = SEA[WX.sea];
+  const key = WX.sea + '|' + WX.precip;
+  const level = 128 - (S.amp - 1) * 46 - (WX.precip === 'rain' ? 24 : WX.precip === 'snow' ? -18 : 0)
+    + Math.sin(chartX * 0.11) * 7 + (Math.random() - 0.5) * 4;
+  const nx = (chartX + 2) % 1024;
+  if (nx < chartX) chartLast = -1;               // the roll comes round again
+  chartRule(nx, Math.min(1024, nx + 26));
+  if (chartLast >= 0) {
+    chartCtx.strokeStyle = '#2f2a22';
+    chartCtx.lineWidth = 2;
+    chartCtx.beginPath();
+    chartCtx.moveTo(chartX, chartLast);
+    chartCtx.lineTo(nx, level);
+    chartCtx.stroke();
+  }
+  if (key !== chartPrev) {                       // every change of weather is entered
+    chartPrev = key;
+    chartCtx.strokeStyle = 'rgba(120,70,30,0.75)';
+    chartCtx.lineWidth = 1.5;
+    chartCtx.beginPath(); chartCtx.moveTo(nx, 18); chartCtx.lineTo(nx, 238); chartCtx.stroke();
+    chartCtx.fillStyle = 'rgba(90,60,30,0.85)';
+    chartCtx.fillRect(nx + 3, 22, 7, 3);
+    chartCtx.fillRect(nx + 3, 28, 11, 3);
+    chartCtx.fillRect(nx + 3, 34, 5, 3);
+  }
+  chartX = nx; chartLast = level;
+  chartTex.update(false);
+};
+
+/* ---------- the ride, and the deep ---------- */
+const sandTmp = new BABYLON.Vector3();
+const sandTick = (t, dt) => {
+  if (!sandRide) return;
+  // she makes way in fits and starts, and the heading wanders on her own
+  const stall = 0.42 + 0.58 * (0.5 + 0.5 * Math.sin(t * 1.7) * Math.sin(t * 0.63));
+  helm.head += (helm.steer * 0.42 + 0.16 * Math.sin(t * 0.51) + 0.07 * Math.sin(t * 1.31)) * dt;
+  const v = helm.speed * stall * dt;
+  helm.x += Math.sin(helm.head) * v;
+  helm.z += Math.cos(helm.head) * v;
+  const lim = SD / 2 - 40;
+  helm.x = Math.max(-lim, Math.min(lim, helm.x));
+  helm.z = Math.max(-lim, Math.min(lim, helm.z));
+  rideBoat.position.set(helm.x, duneAt(helm.x, helm.z) + 0.62 + 0.10 * Math.sin(t * 3.1), helm.z);
+  rideBoat.rotation.y = helm.head - Math.PI / 2;   // the hull runs along its own +x
+  rideDeck.rotation.z = -0.10 + 0.09 * Math.sin(t * 2.4) + 0.04 * Math.sin(t * 10.5) * stall;
+  rideDeck.rotation.x = 0.05 * Math.sin(t * 1.9);
+  // the helm seat, and the head that turns from it
+  const hx = Math.sin(helm.head), hz = Math.cos(helm.head);
+  const ang = helm.head + look.yaw;
+  const fwd = V3(Math.sin(ang), 0, Math.cos(ang));
+  const px = Math.cos(helm.head), pz = -Math.sin(helm.head);   // to starboard
+  const seat = V3(helm.x - hx * 1.9 + px * 0.52, duneAt(helm.x, helm.z) + 2.05 + 0.10 * Math.sin(t * 3.1), helm.z - hz * 1.9 + pz * 0.52);
+  seat.y += duneAt(seat.x, seat.z) * 0.0;
+  roomCam.position.copyFrom(seat);
+  sandTmp.copyFrom(seat).addInPlace(fwd.scale(12));
+  sandTmp.y += look.pitch * 12 - 0.9;
+  roomCam.setTarget(sandTmp);
+  // sand streaming past
+  for (let i = 0; i < sandBlow.length; i++) {
+    const g = sandBlow[i];
+    g.d -= (2.6 + g.sp2 * 5) * dt;
+    if (g.d < 4) { g.d = 46 + Math.random() * 12; g.lat = (Math.random() - 0.5) * 46; }
+    const a = helm.head + 0.2 * Math.sin(t * 0.7 + g.ph);
+    g.sp.position.set(helm.x + Math.sin(a) * g.d + Math.cos(a) * g.lat,
+      g.y + 0.35 * Math.sin(t * 1.4 + g.ph),
+      helm.z + Math.cos(a) * g.d - Math.sin(a) * g.lat);
+    g.sp.width = g.w; g.sp.height = g.h;
+    g.sp.color.a = 0.16 + 0.24 * (0.5 + 0.5 * Math.sin(t * 1.1 + g.ph));
+  }
+  farBeacon.rotation.y += dt * 0.30;
+};
+
+const deepTick = (t, dt) => {
+  // the surface overhead, always trembling
+  {
+    const p = ceilField.pos, b = ceilField.base;
+    for (let i = 0; i < p.length; i += 3)
+      p[i + 2] = 0.0022 * Math.sin(b[i] * 60 + t * 3.4) + 0.0016 * Math.sin(b[i + 1] * 44 - t * 2.6);
+    if (diveMode) pushPlane(ceilField);
+  }
+  if (!diveMode) return;
+  for (let i = 0; i < MOTES; i++) {
+    const o = i * 3;
+    mp[o + 1] += mv[i] * dt;
+    mp[o] += Math.sin(t * 0.9 + mph[i]) * 0.004 * dt;
+    if (mp[o + 1] > -0.004) {
+      mp[o + 1] = -ABYSS_D;
+      mp[o] = (Math.random() - 0.5) * 0.255;
+      mp[o + 2] = (Math.random() - 0.5) * 0.175;
+    }
+  }
+  {
+    const wm = roomCam.getWorldMatrix();
+    const rx = wm.m[0] * 0.0021, ry = wm.m[1] * 0.0021, rz = wm.m[2] * 0.0021;
+    const ux = wm.m[4] * 0.0021, uy = wm.m[5] * 0.0021, uz = wm.m[6] * 0.0021;
+    for (let i = 0; i < MOTES; i++) {
+      const o = i * 3, q = i * 12;
+      const x = mp[o], y = mp[o + 1], z = mp[o + 2];
+      motePos[q] = x - rx - ux; motePos[q + 1] = y - ry - uy; motePos[q + 2] = z - rz - uz;
+      motePos[q + 3] = x + rx - ux; motePos[q + 4] = y + ry - uy; motePos[q + 5] = z + rz - uz;
+      motePos[q + 6] = x + rx + ux; motePos[q + 7] = y + ry + uy; motePos[q + 8] = z + rz + uz;
+      motePos[q + 9] = x - rx + ux; motePos[q + 10] = y - ry + uy; motePos[q + 11] = z - rz + uz;
+    }
+    motes.updateVerticesData(BABYLON.VertexBuffer.PositionKind, motePos);
+  }
+  for (let i = 0; i < rays.length; i++) {
+    const r = rays[i];
+    r.m.visibility = 0.35 + 0.45 * (0.5 + 0.5 * Math.sin(t * 1.3 + r.ph));
+    r.m.rotation.y += dt * 0.05;
+  }
+  for (let i = 0; i < shades.length; i++) {
+    const s = shades[i], w = t * s.sp + s.ph;
+    s.s.position.x = Math.sin(w) * 0.105 * s.dir;
+    s.s.position.z = Math.cos(w * 0.7) * 0.062;
+    s.s.position.y = s.y + Math.sin(w * 0.5) * 0.05;
+    s.s.rotation.y = Math.atan2(-Math.sin(w * 0.7) * 0.062, Math.cos(w) * 0.105 * s.dir);
+  }
+  glowMat.alpha = 0.30 + 0.16 * Math.sin(t * 0.8);
+  // swimming, clamped inside the shaft
+  if (swim.f || swim.up) {
+    const dir = roomCam.getTarget().subtract(roomCam.position).normalize().scale(swim.f * dt * 0.26);
+    dir.y += swim.up * dt * 0.26;
+    towerSeat.addInPlace(dir);
+  }
+  const loc = BABYLON.Vector3.TransformCoordinates(towerSeat, BABYLON.Matrix.Invert(wd.getWorldMatrix()));
+  loc.x = Math.max(-0.115, Math.min(0.115, loc.x));
+  loc.z = Math.max(0.229 - 0.076, Math.min(0.229 + 0.076, loc.z));
+  loc.y = Math.max(-ABYSS_D + 0.07, Math.min(-0.030, loc.y));
+  towerSeat.copyFrom(BABYLON.Vector3.TransformCoordinates(loc, wd.getWorldMatrix()));
+  aimRoomCam();
+};
+
+
+// The desert boat was rendering in the observatory and its hull covered the chamber
+// floor — everything belonging to the sand world is forced onto the desert layer.
+for (const n of [sandScape, rideBoat, rideDeck]) {
+  if (!n) continue;
+  for (const m of n.getChildMeshes()) m.layerMask = SAND_LAYER;
+}
+
+/* ---------- 청음기: the wax cylinder wired to the horn ---------- */
+const waxMat = pbr('waxCylinder', 0x1a1614, 0.55, 0.05);
+const lampOffMat = pbr('voiceLampOff', 0x6b6252, 0.60, 0.10);
+const mkLamp = (hex) => pbr('voiceLamp', hex, 0.35, 0.0, { emissive: hex, emissiveIntensity: 0.0 });
+const phono = grp('listeningMachine', root);
+phono.position.set(-0.270, 0.1235, 0.100);
+phono.scaling.setAll(0.62);
+box(phono, 'phonoBase', 0.150, 0.014, 0.104, M.caseWood, [0, 0.007, 0]);
+box(phono, 'phonoBaseEdge', 0.156, 0.006, 0.110, M.brass, [0, 0.016, 0]);
+for (const sx of [-1, 1]) {
+  box(phono, 'phonoStandard', 0.014, 0.044, 0.020, M.brass, [sx * 0.062, 0.040, 0]);
+  cyl(phono, 'phonoBearing', 0.009, 0.009, 0.010, M.brass, [sx * 0.062, 0.058, 0], [0, 0, Math.PI / 2], 14);
+}
+const waxDrum = cyl(phono, 'waxCylinder', 0.0225, 0.0225, 0.104, waxMat, [0, 0.058, 0], [0, 0, Math.PI / 2], 36);
+for (const sx of [-1, 1]) cyl(phono, 'waxCollar', 0.024, 0.024, 0.005, M.brass, [sx * 0.051, 0.058, 0], [0, 0, Math.PI / 2], 24);
+cyl(phono, 'phonoMandrel', 0.006, 0.006, 0.132, M.brass, [0, 0.058, 0], [0, 0, Math.PI / 2], 12);
+// the stylus riding the wax, and the pipe that carries it to the horn
+const stylusArm = grp('stylusArm', phono);
+stylusArm.position.set(-0.030, 0.058, 0.026);
+cyl(stylusArm, 'stylusBoom', 0.0035, 0.0035, 0.048, M.brass, [0.024, 0, 0], [0, 0, Math.PI / 2], 8);
+box(stylusArm, 'stylusHead', 0.014, 0.012, 0.010, M.brass, [0.048, -0.004, 0]);
+cyl(stylusArm, 'stylusNeedle', 0.0011, 0.0011, 0.014, M.brass, [0.048, -0.014, -0.006], [0.5, 0, 0], 6);
+cyl(phono, 'stylusPost', 0.005, 0.006, 0.036, M.brass, [-0.030, 0.040, 0.026], null, 10);
+wire(phono, 'phonoPipe', [-0.030, 0.062, 0.030], [0.030, 0.086, -0.052], 0.0034, M.brass);
+wire(phono, 'phonoPipe2', [0.030, 0.086, -0.052], [0.155, 0.128, -0.205], 0.0034, M.brass);
+cyl(phono, 'phonoPipeCollar', 0.006, 0.006, 0.010, M.brass, [0.030, 0.086, -0.052], null, 10);
+// the crank that turns it over
+const crank = grp('phonoCrank', phono);
+crank.position.set(0.075, 0.058, 0);
+cyl(crank, 'crankHub', 0.010, 0.010, 0.010, M.brass, [0, 0, 0], [0, 0, Math.PI / 2], 14);
+box(crank, 'crankArm', 0.008, 0.034, 0.007, M.brass, [0.008, 0.017, 0]);
+sph(crank, 'crankKnob', 0.0075, M.caseWood, [0.008, 0.036, 0], 12);
+// three indicator lamps: lighthouse, waves, fog
+const VOICES = [
+  { key: 'tower', hex: 0xffc46a, label: '등대', line: '계속 살피지 않으면 중요한 것을 놓칠 것 같아.' },
+  { key: 'wave',  hex: 0x7fb2d8, label: '파도', line: '그 생각이 커지면 다른 감정이 느껴지지 않게 움직여.' },
+  { key: 'fog',   hex: 0xd8cbb0, label: '안개', line: '그래도 아직은 전부 보여주고 싶지 않아.' },
+];
+const voiceState = {};
+VOICES.forEach((v, i) => {
+  const x = -0.044 + i * 0.044;
+  box(phono, 'voicePlate', 0.030, 0.008, 0.020, M.brass, [x, 0.022, 0.044]);
+  const mat = mkLamp(v.hex);
+  const bulb = sph(phono, 'voiceLamp', 0.0075, mat, [x, 0.030, 0.044], 12);
+  noCast(bulb);
+  torus(phono, 'voiceLampRing', 0.010, 0.0018, M.brass, [x, 0.026, 0.044], [Math.PI / 2, 0, 0], Math.PI * 2, 14);
+  voiceState[v.key] = { mat, armed: false, glow: 0, v };
+});
+box(phono, 'phonoLabel', 0.100, 0.006, 0.014, M.brass, [0, 0.020, -0.044]);
+
+// playback: the machine speaks back what each room said
+const voiceBox = document.createElement('div');
+voiceBox.id = 'voice';
+document.body.appendChild(voiceBox);
+const voiceStyle = document.createElement('style');
+voiceStyle.textContent =
+  '#voice{position:fixed;left:50%;bottom:46px;transform:translateX(-50%) translateY(10px);z-index:4;' +
+  'display:flex;flex-direction:column;align-items:center;gap:8px;max-width:min(640px,84vw);' +
+  'text-align:center;pointer-events:none;opacity:0;transition:opacity .5s ease,transform .5s ease}' +
+  '#voice.show{opacity:1;transform:translateX(-50%) translateY(0)}' +
+  '#voice .who{font-family:var(--font-body,Lora,Georgia,serif);font-size:11px;letter-spacing:.22em;' +
+  'color:rgba(216,187,132,.9)}' +
+  '#voice .said{margin:0;font-family:var(--font-heading,\'Cormorant Garamond\',Georgia,serif);' +
+  'font-size:23px;line-height:1.5;letter-spacing:.01em;color:#efe7d6}';
+document.head.appendChild(voiceStyle);
+
+let playing = null, playAt = 0, spinNow = 0;
+const recordVoice = (key) => {
+  const s = voiceState[key];
+  if (!s || s.armed) return;
+  s.armed = true;
+};
+const playVoices = () => {
+  const armed = VOICES.filter((v) => voiceState[v.key].armed);
+  if (!armed.length) {
+    voiceBox.innerHTML = '<span class="who">청음기</span><p class="said">아직 아무것도 기록되지 않았습니다.</p>';
+    voiceBox.classList.add('show');
+    clearTimeout(playAt);
+    playAt = setTimeout(() => voiceBox.classList.remove('show'), 2600);
+    return;
+  }
+  let i = 0;
+  const step = () => {
+    if (i >= armed.length) {
+      voiceBox.classList.remove('show');
+      playing = null;
+      return;
+    }
+    const v = armed[i++];
+    voiceState[v.key].glow = 1;
+    voiceBox.classList.remove('show');
+    setTimeout(() => {
+      voiceBox.innerHTML = '<span class="who">' + v.label + '</span><p class="said">' + v.line + '</p>';
+      voiceBox.classList.add('show');
+    }, 220);
+    playAt = setTimeout(step, 4200);
+  };
+  playing = true;
+  clearTimeout(playAt);
+  step();
+};
+window.recordVoice = recordVoice;
+window.playVoices = playVoices;
+
+/* ---------- animation ---------- */
+let last = performance.now(), frame = 0;
+const t0 = performance.now();
+scene.onBeforeRenderObservable.add(() => {
+  const now = performance.now(), dt = Math.min(0.05, (now - last) / 1000); last = now;
+  const t = (now - t0) * 0.00042;
+  const S = SEA[WX.sea];
+  const ts = t * S.speed;
+  frame++;
+
+  if (!anyRoom() && scene.activeCamera !== camera) scene.activeCamera = camera;
+  flyTick(dt);
+  sandTick(t, dt);
+  chartTick(t, dt);
+  cloudTick(t, dt);
+  buoyTick(t, dt);
+  deepTick(t, dt);
+  seaWindow.setVector2('uRes', new BABYLON.Vector2(engine.getRenderWidth(), engine.getRenderHeight()));
+  portalCam.position.copyFrom(camera.position);
+  portalCam.setTarget(camera.getTarget());
+  rain.isVisible = (WX.precip === 'rain');
+  snow.isVisible = (WX.precip === 'snow');
+
+  // the open swell
+  if (frame % 2 === 0) {
+    const p = S_.pos, b = S_.base;
+    for (let i = 0; i < p.length; i += 3) {
+      const x = b[i], y = b[i + 1];
+      p[i + 2] = S.amp * (
+        Math.sin(x * 0.55 + ts * 2.1) * 0.10 +
+        Math.sin(y * 0.42 - ts * 1.6) * 0.13 +
+        Math.sin((x + y) * 0.20 + ts * 1.1) * 0.20 +
+        Math.sin((x * 0.9 - y * 1.3) * 0.9 + ts * 3.4) * 0.03);
+    }
+    pushPlane(S_);
+    flipPlane(S_);
+  }
+
+  // rain / snow
+  if (WX.precip === 'rain') {
+    const slant = 0.10 + (S.amp - 1) * 0.06;
+    for (let i = 0; i < DROPS; i++) {
+      const d = rv[i] * dt, o = i * 6;
+      rp[o + 1] -= d; rp[o + 4] -= d;
+      rp[o] += d * slant; rp[o + 3] += d * slant;
+      if (rp[o + 4] < -0.7) {
+        const x = (Math.random() - 0.5) * FIELD, z = (Math.random() - 0.5) * FIELD - 0.6;
+        const len = 0.026 + Math.random() * 0.040;
+        rp[o] = x; rp[o + 1] = TOPY; rp[o + 2] = z;
+        rp[o + 3] = x + 0.006; rp[o + 4] = TOPY - len; rp[o + 5] = z;
+      }
+    }
+    rain.updateVerticesData(BABYLON.VertexBuffer.PositionKind, rp);
+  } else if (WX.precip === 'snow') {
+    for (let i = 0; i < FLAKES; i++) {
+      const o = i * 3;
+      sp[o + 1] -= sv[i] * dt;
+      sp[o] += (0.05 + Math.sin(t * 2.0 + sph_[i]) * 0.06) * dt;
+      sp[o + 2] += Math.cos(t * 1.5 + sph_[i] * 1.7) * 0.05 * dt;
+      if (sp[o + 1] < -0.7) {
+        sp[o] = (Math.random() - 0.5) * FIELD;
+        sp[o + 1] = TOPY;
+        sp[o + 2] = (Math.random() - 0.5) * FIELD - 0.6;
+      }
+    }
+    const wm = camera.getWorldMatrix();
+    const rx = wm.m[0] * 0.014, ry = wm.m[1] * 0.014, rz = wm.m[2] * 0.014;
+    const ux = wm.m[4] * 0.014, uy = wm.m[5] * 0.014, uz = wm.m[6] * 0.014;
+    for (let i = 0; i < FLAKES; i++) {
+      const o = i * 3, q = i * 12;
+      const x = sp[o], y = sp[o + 1], z = sp[o + 2];
+      snowPos[q]      = x - rx - ux; snowPos[q + 1]  = y - ry - uy; snowPos[q + 2]  = z - rz - uz;
+      snowPos[q + 3]  = x + rx - ux; snowPos[q + 4]  = y + ry - uy; snowPos[q + 5]  = z + rz - uz;
+      snowPos[q + 6]  = x + rx + ux; snowPos[q + 7]  = y + ry + uy; snowPos[q + 8]  = z + rz + uz;
+      snowPos[q + 9]  = x - rx + ux; snowPos[q + 10] = y - ry + uy; snowPos[q + 11] = z - rz + uz;
+    }
+    snow.updateVerticesData(BABYLON.VertexBuffer.PositionKind, snowPos);
+  }
+
+  // instruments turning in the wind
+  const gust = (0.6 + 0.5 * S.amp) * (1 + 0.35 * Math.sin(t * 2.3) + 0.15 * Math.sin(t * 7.1));
+  cups.rotation.y -= dt * 3.4 * gust;
+  disc.rotation.z -= dt * 1.9 * gust;
+  sockBody.rotation.z = Math.PI / 2 - 0.12 + 0.07 * Math.sin(t * 3.1);
+  sockBody.rotation.y = 0.10 * Math.sin(t * 2.2);
+
+  // the captive cloud
+  if (frame % 3 === 0) {
+    for (let i = 0; i < cCount; i++) {
+      const nx = cDir[i * 3], ny = cDir[i * 3 + 1], nz = cDir[i * 3 + 2];
+      let r = 0.024;
+      for (let j = 0; j < LOBES.length; j++) {
+        const L = LOBES[j];
+        const d = nx * L.x + ny * L.y + nz * L.z - 0.15;
+        if (d > 0) r += d * d * L.amp * 2.2 * (1 + 0.30 * Math.sin(t * 1.6 + L.ph));
+      }
+      r += 0.0022 * Math.sin(nx * 3.1 + t * 1.4) * Math.cos(ny * 2.6 - t * 1.1)
+         + 0.0016 * Math.sin(nz * 3.7 - t * 0.9) * Math.cos(nx * 2.2 + t * 1.3);
+      if (r > 0.042) r = 0.042;
+      let vy = ny * r;
+      if (vy < -0.007) vy = -0.007 + (vy + 0.007) * 0.30;
+      // the glass is the limit: as it grows the cloud packs against the dome
+      let vx = nx * r, vz = nz * r;
+      const gsc = cloudG.scaling.x;
+      let jy = 0.070 + vy * gsc;
+      if (jy > 0.1445) { jy = 0.1445; vy = (jy - 0.070) / gsc; }
+      if (jy < 0.004) { jy = 0.004; vy = (jy - 0.070) / gsc; }
+      const rr = Math.hypot(vx, vz) * gsc;
+      const tt = jy / 0.150;
+      const rmax = 0.0615 * Math.sqrt(Math.max(0, 1 - Math.pow(tt, 6))) - 0.0028;
+      if (rr > rmax && rr > 1e-6) { const f = rmax / rr; vx *= f; vz *= f; }
+      cPosArr[i * 3] = vx; cPosArr[i * 3 + 1] = vy; cPosArr[i * 3 + 2] = vz;
+    }
+    cloudMesh.updateVerticesData(BABYLON.VertexBuffer.PositionKind, cPosArr);
+    BABYLON.VertexData.ComputeNormals(cPosArr, cIdx, cNrm);
+    cloudMesh.updateVerticesData(BABYLON.VertexBuffer.NormalKind, cNrm);
+  }
+  cloudG.position.y = 0.070 + 0.004 * Math.sin(t * 1.9);
+  cloudG.rotation.y += dt * 0.16;
+
+  // the beacon sweeping the water
+  beamCtl.rN += (beamCtl.reach - beamCtl.rN) * Math.min(1, dt * 2.2);
+  beamCtl.sN += (beamCtl.speed - beamCtl.sN) * Math.min(1, dt * 2.2);
+  beacon.rotation.y += dt * (0.05 + 1.05 * beamCtl.sN);
+  lens.rotation.y = beacon.rotation.y;
+  {
+    const k = 0.34 + 1.05 * beamCtl.rN;         // how far the light carries
+    const w = 0.55 + 0.85 * beamCtl.rN;
+    for (let i = 0; i < beamCones.length; i++) {
+      const b = beamCones[i], dir = i === 0 ? 1 : -1;
+      b.scaling.set(w, k, w);
+      b.position.x = dir * (BEAM_NEAR + BEAM_LEN * k / 2);
+    }
+    beaconLight.range = 18 + 44 * beamCtl.rN;
+    reachLever.rotation.x = 0.62 - 1.24 * beamCtl.rN;
+    speedWheel.rotation.z -= dt * (0.4 + 7.0 * beamCtl.sN);
+    const cs = (0.85 + 0.75 * beamCtl.rN) * (1 + 0.05 * Math.sin(t * 9.0));
+    beamCore.scaling.setAll(cs);
+    beamCoreMat.alpha = (towerMode ? 0.12 : 0.22) * (0.85 + 0.15 * Math.sin(t * 9.0));
+  }
+  // the listening machine
+  for (const k in voiceState) {
+    const st = voiceState[k];
+    const want = st.glow > 0 ? 2.6 : (st.armed ? 0.85 : 0.0);
+    st.glow = Math.max(0, st.glow - dt * 0.28);
+    st.mat.emissiveColor = hexc(st.v.hex).scale(want * (0.82 + 0.18 * Math.sin(t * 6.4)));
+  }
+  spinNow += ((playing ? 1 : 0) - spinNow) * Math.min(1, dt * 3);
+  waxDrum.rotation.x += dt * 2.2 * spinNow;
+  crank.rotation.x += dt * 2.2 * spinNow;
+  fadeBeams(beamCones, towerMode ? 0.30 : 0.46);
+  if (sandRide) fadeBeams(farBeams, 0.26);
+  lampMat.emissiveColor = hexc(0xffd694).scale(towerMode ? 0.8 + 0.2 * Math.sin(t * 9.0) : 2.2 + 0.5 * Math.sin(t * 9.0));
+
+  // the little sea in the open drawer
+  {
+    const p = W.pos, b = W.base;
+    for (let i = 0; i < p.length; i += 3) {
+      const x = b[i], y = b[i + 1];
+      p[i + 2] = S.amp * (
+        Math.sin(x * 52 + ts * 3.0) * 0.0034 +
+        Math.sin(y * 38 - ts * 2.4) * 0.0026 +
+        Math.sin((x + y) * 88 + ts * 4.6) * 0.0014 +
+        Math.sin((x - y) * 150 - ts * 6.2) * 0.0006);
+    }
+    pushPlane(W);
+  }
+
+  // fog welling up inside the chamber, then spilling out of the open door
+  const fogThin = 0.42 + 0.58 * (0.5 + 0.5 * Math.sin(t * 0.62) * Math.cos(t * 0.23));
+  // the dust devil: wanders the floor, leans as it runs, spins fast
+  devilState.x = Math.sin(t * 0.42) * 0.062 + Math.sin(t * 0.17) * 0.020;
+  devilState.z = Math.cos(t * 0.31) * 0.048 + Math.sin(t * 0.63) * 0.012;
+  devilState.sp += dt * 7.4;
+  devil.position.set(devilState.x, 0.019, devilState.z);
+  devil.rotation.z = 0.10 * Math.sin(t * 0.9);
+  devilMat.alpha = 0.16 + 0.16 * fogThin;
+  {
+    const wm = (scene.activeCamera || camera).getWorldMatrix();
+    const rx = wm.m[0], ry = wm.m[1], rz = wm.m[2];
+    const ux = wm.m[4], uy = wm.m[5], uz = wm.m[6];
+    for (let i = 0; i < grains.length; i++) {
+      const g = grains[i], q = i * 12;
+      g.t += dt * g.rise;
+      if (g.t > 1) { g.t -= 1; g.a = Math.random() * Math.PI * 2; }
+      g.a += dt * g.sp * (1.6 - g.t);
+      const r = (0.005 + 0.026 * Math.pow(g.t, 1.30)) * g.jr;
+      const lean = 0.026 * g.t;
+      const x = Math.cos(g.a) * r + Math.cos(devilState.sp * 0.6) * lean;
+      const y = 0.003 + g.t * 0.135;
+      const z = Math.sin(g.a) * r + Math.sin(devilState.sp * 0.6) * lean;
+      const s2 = g.sz * (0.55 + 0.85 * g.t);
+      const ax = rx * s2, ay = ry * s2, az = rz * s2;
+      const bx = ux * s2, by = uy * s2, bz = uz * s2;
+      devilPos[q] = x - ax - bx; devilPos[q + 1] = y - ay - by; devilPos[q + 2] = z - az - bz;
+      devilPos[q + 3] = x + ax - bx; devilPos[q + 4] = y + ay - by; devilPos[q + 5] = z + az - bz;
+      devilPos[q + 6] = x + ax + bx; devilPos[q + 7] = y + ay + by; devilPos[q + 8] = z + az + bz;
+      devilPos[q + 9] = x - ax + bx; devilPos[q + 10] = y - ay + by; devilPos[q + 11] = z - az + bz;
+    }
+    devilMesh.updateVerticesData(BABYLON.VertexBuffer.PositionKind, devilPos);
+  }
+  devilFoot.scaling.setAll(1.1 + 0.25 * Math.sin(t * 3.1));
+  for (let i = 0; i < fogPuffs.length; i++) {
+    const p = fogPuffs[i];
+    p.life += dt * p.speed;
+    if (p.life >= 1) {
+      p.life -= 1;
+      p.x = (Math.random() - 0.5) * 0.14;
+      p.z0 = -FD / 2 + 0.012 + Math.random() * 0.06;
+      p.speed = 0.055 + Math.random() * 0.055;
+    }
+    const L = p.life, w = t * 1.1 + p.ph;
+    const DOORC = 0;                            // the fog wells up and slips over the sill
+    let x, y, z, sc, a;
+    if (L < 0.52) {                             // drifting across the sand toward the doorway
+      const u = L / 0.52;
+      x = p.x + (DOORC - p.x) * u * 0.75 + Math.sin(w) * 0.012;
+      y = 0.017 + u * 0.026 + Math.sin(w * 0.8) * 0.003;
+      z = p.z0 + u * (FD / 2 - 0.02 - p.z0) + Math.cos(w * 0.7) * 0.008;
+      sc = p.s * (0.70 + u * 0.40);
+      a = p.op * Math.min(1, u * 4.5) * fogThin;
+    } else {                                    // over the sill, then sinking across the desk
+      const u = (L - 0.52) / 0.48;
+      // it reaches the doorway, then settles back down onto the sand inside
+      x = DOORC * 0.7 + Math.sin(w * 0.9) * 0.012 - u * 0.030;
+      y = 0.034 - u * 0.022 + Math.sin(w * 1.3) * 0.002;
+      z = FD / 2 - 0.024 - u * 0.055;
+      sc = p.s * (1.05 + u * 0.55);
+      a = p.op * 0.72 * (1 - u * u * 0.9) * (0.45 + 0.55 * fogThin);
+    }
+    p.sprite.position.set(fogAnchor.x + x, fogAnchor.y + y, fogAnchor.z + z);
+    p.sprite.size = sc;
+    p.sprite.color.a = a;
+    p.sprite.angle = Math.sin(w * 0.4) * 0.6;
+  }
+
+  // the lost boat wandering
+  const bt = t * 0.15;                          // aground: it barely makes way
+  const bx = (u) => 0.036 * Math.sin(u * 0.9) + 0.009 * Math.sin(u * 2.3 + 1.1);
+  const bz = (u) => 0.018 * Math.cos(u * 0.7) + 0.006 * Math.sin(u * 1.7) - 0.004;
+  const x0 = bx(bt), z0 = bz(bt), x1 = bx(bt + 0.02), z1 = bz(bt + 0.02);
+  boat.position.set(x0, 0.017 + chamberDune(x0, -z0) + 0.0016 * Math.sin(t * 3.4), z0);
+  boat.rotation.y = Math.atan2(-(z1 - z0), (x1 - x0));
+  boat.rotation.z = 0.05 * Math.sin(t * 2.7) - 0.06;
+  boatLight.intensity = 0.075 + 0.03 * Math.sin(t * 6.1);
+  for (let i = 0; i < fogFloor.length; i++) {
+    const f = fogFloor[i], w = t * 0.8 + f.ph;
+    f.sprite.position.x = fogAnchor.x + f.x + Math.sin(w) * 0.010;
+    f.sprite.position.z = fogAnchor.z + f.z + Math.cos(w * 0.8) * 0.008;
+    f.sprite.color.a = 0.30 + 0.30 * (0.5 + 0.5 * Math.sin(w * 1.2)) * fogThin;
+  }
+});
+
+engine.runRenderLoop(() => scene.render());
+window.addEventListener('resize', () => {
+  engine.resize();
+  const s = rttSize();
+  rtt.resize({ width: s.width, height: s.height });
+});
+</script>
+</body>
+</html>
