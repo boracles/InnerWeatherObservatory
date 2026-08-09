@@ -5073,6 +5073,60 @@ setup.startAmbience = function () {
 };
 /* END INNER WEATHER AUDIO ENGINE */
 
+/* BEGIN COMPACT OBSERVATION PROGRESS */
+setup.progressStorageKey = "inner-weather-observatory-progress-v1";
+setup.resumablePassages = ["거리두어 보기", "걱정과 보호", "필요와 다음 행동", "간단 관측 요약"];
+setup.saveObservationProgress = function (passageName) {
+	var target = passageName || passage();
+	if (setup.resumablePassages.indexOf(target) === -1) return false;
+	var variables = State.variables;
+	var progress = {
+		passage:target,
+		movementMode:variables.movementMode || "",
+		weatherMode:variables.weatherMode || "",
+		focusPart:variables.focusPart || "",
+		focusDistance:variables.focusDistance || "",
+		focusConcern:variables.focusConcern || "",
+		focusProtection:variables.focusProtection || "",
+		focusNext:variables.focusNext || "",
+		stateSelection:variables.stateSelection || {id:"", label:""}
+	};
+	try {
+		localStorage.setItem(setup.progressStorageKey, JSON.stringify(progress));
+		return true;
+	} catch (error) { return false; }
+};
+setup.getObservationProgress = function () {
+	try {
+		var progress = JSON.parse(localStorage.getItem(setup.progressStorageKey) || "null");
+		return progress && setup.resumablePassages.indexOf(progress.passage) !== -1 ? progress : null;
+	} catch (error) { return null; }
+};
+setup.clearObservationProgress = function () {
+	try { localStorage.removeItem(setup.progressStorageKey); } catch (error) {}
+};
+setup.resumeObservation = function () {
+	var progress = setup.getObservationProgress();
+	if (!progress) return false;
+	Object.keys(progress).forEach(function (key) {
+		if (key !== "passage") State.variables[key] = progress[key];
+	});
+	setup.startAmbience();
+	Engine.play(progress.passage);
+	return true;
+};
+setup.renderResumeChoice = function () {
+	var host = document.getElementById("resume-observation-host");
+	if (!host || !setup.getObservationProgress()) return;
+	var button = document.createElement("button");
+	button.type = "button";
+	button.className = "secondary";
+	button.textContent = "이어서 관측하기";
+	button.addEventListener("click", setup.resumeObservation);
+	host.replaceChildren(button);
+};
+/* END COMPACT OBSERVATION PROGRESS */
+
 setup.ensureWeatherStation = function () {
 	var mount = document.getElementById("station-backdrop");
 	if (!mount) {
@@ -5338,10 +5392,11 @@ $(document).on(":passagedisplay", function () {
 	if (!isReading && !isLighthouseRoom && !exitLink) {
 		exitLink = document.createElement("a");
 		exitLink.id = "global-exit";
-		exitLink.href = "#";
+			exitLink.href = "#";
 		exitLink.textContent = "나가기";
 		exitLink.addEventListener("click", function (event) {
 			event.preventDefault();
+			setup.saveObservationProgress(passage());
 			if (setup.audio) setup.audio.stopAll();
 			Engine.play("관측 종료");
 		});
@@ -5373,6 +5428,12 @@ $(document).on(":passagedisplay", function () {
 	}
 	if (passage() === "관측소 허브") {
 		setTimeout(setup.renderHubUI, 0);
+	}
+	if (setup.resumablePassages.indexOf(passage()) !== -1) {
+		setup.saveObservationProgress(passage());
+	}
+	if (passage() === "첫 진입" || passage() === "관측 종료") {
+		setTimeout(setup.renderResumeChoice, 0);
 	}
 	setTimeout(setup.ensureWeatherStation, 0);
 });
@@ -5505,6 +5566,7 @@ if (!setup.audioInteractionBound) {
 <h1>내면 기상 관측소</h1>
 <p>지금 내 마음의 날씨를 천천히 살펴봅니다.</p>
 <<button "나의 날씨 관측하기">><<run setup.startAmbience()>><<goto "들어다보기">><</button>>
+<div id="resume-observation-host" class="resume-observation-host"></div>
 </div>
 </div>
 
@@ -5595,7 +5657,7 @@ if (!setup.audioInteractionBound) {
 <p>지금의 선택은 <strong><<print $focusNext>></strong>입니다.</p>
 <div class="transmission">이 기록은 진단이나 해석이 아니라, 지금의 반응을 잠시 바라본 관찰입니다. 이유를 모두 알아내지 않아도 충분합니다.</div>
 <div class="choices">
-[[관측을 마친다->관측 종료]]
+<<link "관측을 마친다">><<run setup.clearObservationProgress()>><<goto "관측 종료">><</link>>
 <<link "다른 부분을 살펴본다">><<set $focusDistance = "">><<set $focusConcern = "">><<set $focusProtection = "">><<set $focusNext = "">><<goto "들어다보기">><</link>>
 </div>
 </div>
@@ -5606,7 +5668,7 @@ if (!setup.audioInteractionBound) {
 <p class="observation-step">관측 완료</p>
 <h1>지금은 잔잔한 날씨입니다</h1>
 <p>눈에 띄는 부분이 없다는 관찰도 충분합니다. 더 깊이 찾거나 이름 붙일 필요 없이 여기서 마칠 수 있습니다.</p>
-<div class="choices">[[관측을 마친다->관측 종료]] [[그래도 살펴본다->거리두어 보기]]</div>
+<div class="choices"><<link "관측을 마친다">><<run setup.clearObservationProgress()>><<goto "관측 종료">><</link>> [[그래도 살펴본다->거리두어 보기]]</div>
 </div>
 
 
@@ -6481,5 +6543,6 @@ if (!setup.audioInteractionBound) {
 
 <p class="prompt">이 작품은 자기성찰을 위한 프로토타입이며 심리치료나 위기 지원을 대신하지 않습니다.</p>
 
-<div class="choices"><<link "다음 관측 시작">><<run setup.audio.dispose(); Engine.restart()>><</link>></div>
+<div id="resume-observation-host" class="resume-observation-host"></div>
+<div class="choices"><<link "새 관측 시작">><<run setup.clearObservationProgress(); setup.audio.dispose(); Engine.restart()>><</link>></div>
 </div>

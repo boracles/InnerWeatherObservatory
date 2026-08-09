@@ -5156,6 +5156,60 @@ setup.startAmbience = function () {
 };
 /* END INNER WEATHER AUDIO ENGINE */
 
+/* BEGIN COMPACT OBSERVATION PROGRESS */
+setup.progressStorageKey = "inner-weather-observatory-progress-v1";
+setup.resumablePassages = ["거리두어 보기", "걱정과 보호", "필요와 다음 행동", "간단 관측 요약"];
+setup.saveObservationProgress = function (passageName) {
+	var target = passageName || passage();
+	if (setup.resumablePassages.indexOf(target) === -1) return false;
+	var variables = State.variables;
+	var progress = {
+		passage:target,
+		movementMode:variables.movementMode || "",
+		weatherMode:variables.weatherMode || "",
+		focusPart:variables.focusPart || "",
+		focusDistance:variables.focusDistance || "",
+		focusConcern:variables.focusConcern || "",
+		focusProtection:variables.focusProtection || "",
+		focusNext:variables.focusNext || "",
+		stateSelection:variables.stateSelection || {id:"", label:""}
+	};
+	try {
+		localStorage.setItem(setup.progressStorageKey, JSON.stringify(progress));
+		return true;
+	} catch (error) { return false; }
+};
+setup.getObservationProgress = function () {
+	try {
+		var progress = JSON.parse(localStorage.getItem(setup.progressStorageKey) || "null");
+		return progress && setup.resumablePassages.indexOf(progress.passage) !== -1 ? progress : null;
+	} catch (error) { return null; }
+};
+setup.clearObservationProgress = function () {
+	try { localStorage.removeItem(setup.progressStorageKey); } catch (error) {}
+};
+setup.resumeObservation = function () {
+	var progress = setup.getObservationProgress();
+	if (!progress) return false;
+	Object.keys(progress).forEach(function (key) {
+		if (key !== "passage") State.variables[key] = progress[key];
+	});
+	setup.startAmbience();
+	Engine.play(progress.passage);
+	return true;
+};
+setup.renderResumeChoice = function () {
+	var host = document.getElementById("resume-observation-host");
+	if (!host || !setup.getObservationProgress()) return;
+	var button = document.createElement("button");
+	button.type = "button";
+	button.className = "secondary";
+	button.textContent = "이어서 관측하기";
+	button.addEventListener("click", setup.resumeObservation);
+	host.replaceChildren(button);
+};
+/* END COMPACT OBSERVATION PROGRESS */
+
 setup.ensureWeatherStation = function () {
 	var mount = document.getElementById("station-backdrop");
 	if (!mount) {
@@ -5421,10 +5475,11 @@ $(document).on(":passagedisplay", function () {
 	if (!isReading && !isLighthouseRoom && !exitLink) {
 		exitLink = document.createElement("a");
 		exitLink.id = "global-exit";
-		exitLink.href = "#";
+			exitLink.href = "#";
 		exitLink.textContent = "나가기";
 		exitLink.addEventListener("click", function (event) {
 			event.preventDefault();
+			setup.saveObservationProgress(passage());
 			if (setup.audio) setup.audio.stopAll();
 			Engine.play("관측 종료");
 		});
@@ -5456,6 +5511,12 @@ $(document).on(":passagedisplay", function () {
 	}
 	if (passage() === "관측소 허브") {
 		setTimeout(setup.renderHubUI, 0);
+	}
+	if (setup.resumablePassages.indexOf(passage()) !== -1) {
+		setup.saveObservationProgress(passage());
+	}
+	if (passage() === "첫 진입" || passage() === "관측 종료") {
+		setTimeout(setup.renderResumeChoice, 0);
 	}
 	setTimeout(setup.ensureWeatherStation, 0);
 });
@@ -5573,6 +5634,7 @@ if (!setup.audioInteractionBound) {
 &lt;h1&gt;내면 기상 관측소&lt;/h1&gt;
 &lt;p&gt;지금 내 마음의 날씨를 천천히 살펴봅니다.&lt;/p&gt;
 &lt;&lt;button &quot;나의 날씨 관측하기&quot;&gt;&gt;&lt;&lt;run setup.startAmbience()&gt;&gt;&lt;&lt;goto &quot;들어다보기&quot;&gt;&gt;&lt;&lt;/button&gt;&gt;
+&lt;div id=&quot;resume-observation-host&quot; class=&quot;resume-observation-host&quot;&gt;&lt;/div&gt;
 &lt;/div&gt;
 &lt;/div&gt;</tw-passagedata><tw-passagedata pid="5" name="들어다보기" tags="" position="320,350" size="140,100">&lt;&lt;set $stateBehaviorSelection = {id:&quot;&quot;,label:&quot;&quot;}&gt;&gt;
 &lt;&lt;set $customBehavior = &quot;&quot;&gt;&gt;
@@ -5643,14 +5705,14 @@ if (!setup.audioInteractionBound) {
 &lt;p&gt;지금의 선택은 &lt;strong&gt;&lt;&lt;print $focusNext&gt;&gt;&lt;/strong&gt;입니다.&lt;/p&gt;
 &lt;div class=&quot;transmission&quot;&gt;이 기록은 진단이나 해석이 아니라, 지금의 반응을 잠시 바라본 관찰입니다. 이유를 모두 알아내지 않아도 충분합니다.&lt;/div&gt;
 &lt;div class=&quot;choices&quot;&gt;
-[[관측을 마친다-&gt;관측 종료]]
+&lt;&lt;link &quot;관측을 마친다&quot;&gt;&gt;&lt;&lt;run setup.clearObservationProgress()&gt;&gt;&lt;&lt;goto &quot;관측 종료&quot;&gt;&gt;&lt;&lt;/link&gt;&gt;
 &lt;&lt;link &quot;다른 부분을 살펴본다&quot;&gt;&gt;&lt;&lt;set $focusDistance = &quot;&quot;&gt;&gt;&lt;&lt;set $focusConcern = &quot;&quot;&gt;&gt;&lt;&lt;set $focusProtection = &quot;&quot;&gt;&gt;&lt;&lt;set $focusNext = &quot;&quot;&gt;&gt;&lt;&lt;goto &quot;들어다보기&quot;&gt;&gt;&lt;&lt;/link&gt;&gt;
 &lt;/div&gt;
 &lt;/div&gt;</tw-passagedata><tw-passagedata pid="10" name="간단 관측 종료" tags="" position="1220,860" size="190,100">&lt;div class=&quot;compact-summary&quot;&gt;
 &lt;p class=&quot;observation-step&quot;&gt;관측 완료&lt;/p&gt;
 &lt;h1&gt;지금은 잔잔한 날씨입니다&lt;/h1&gt;
 &lt;p&gt;눈에 띄는 부분이 없다는 관찰도 충분합니다. 더 깊이 찾거나 이름 붙일 필요 없이 여기서 마칠 수 있습니다.&lt;/p&gt;
-&lt;div class=&quot;choices&quot;&gt;[[관측을 마친다-&gt;관측 종료]] [[그래도 살펴본다-&gt;거리두어 보기]]&lt;/div&gt;
+&lt;div class=&quot;choices&quot;&gt;&lt;&lt;link &quot;관측을 마친다&quot;&gt;&gt;&lt;&lt;run setup.clearObservationProgress()&gt;&gt;&lt;&lt;goto &quot;관측 종료&quot;&gt;&gt;&lt;&lt;/link&gt;&gt; [[그래도 살펴본다-&gt;거리두어 보기]]&lt;/div&gt;
 &lt;/div&gt;</tw-passagedata><tw-passagedata pid="11" name="상태 직접 적기" tags="" position="320,520" size="170,110">&lt;div class=&quot;custom-input-panel&quot;&gt;
 &lt;h2&gt;지금의 상태를 내 말로 적어주세요.&lt;/h2&gt;
 &lt;textarea id=&quot;discovery-custom-input&quot; rows=&quot;4&quot; maxlength=&quot;500&quot; autofocus&gt;&lt;/textarea&gt;
@@ -6277,7 +6339,8 @@ if (!setup.audioInteractionBound) {
 
 &lt;p class=&quot;prompt&quot;&gt;이 작품은 자기성찰을 위한 프로토타입이며 심리치료나 위기 지원을 대신하지 않습니다.&lt;/p&gt;
 
-&lt;div class=&quot;choices&quot;&gt;&lt;&lt;link &quot;다음 관측 시작&quot;&gt;&gt;&lt;&lt;run setup.audio.dispose(); Engine.restart()&gt;&gt;&lt;&lt;/link&gt;&gt;&lt;/div&gt;
+&lt;div id=&quot;resume-observation-host&quot; class=&quot;resume-observation-host&quot;&gt;&lt;/div&gt;
+&lt;div class=&quot;choices&quot;&gt;&lt;&lt;link &quot;새 관측 시작&quot;&gt;&gt;&lt;&lt;run setup.clearObservationProgress(); setup.audio.dispose(); Engine.restart()&gt;&gt;&lt;&lt;/link&gt;&gt;&lt;/div&gt;
 &lt;/div&gt;</tw-passagedata></tw-storydata>
 	<script id="script-sugarcube" type="text/javascript">
 	/*! SugarCube JS */
