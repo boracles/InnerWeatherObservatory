@@ -4601,7 +4601,7 @@ setup.audio = (function () {
 	var visibilityHandler = null;
 	var startedByUser = false;
 	var readingActive = true;
-	var masterVolume = 0.42;
+	var masterVolume = 0.82;
 	var lighthouseRotation = 0.34;
 	var lastSfxAt = {};
 	var weather = { fog:0.15, rain:0, wave:0.2, wind:0.15, cloud:0.25, light:0.55 };
@@ -4838,7 +4838,7 @@ setup.audio = (function () {
 		if (typeof setup.renderSoundControl === "function") setup.renderSoundControl();
 		if (!api.initialized) return;
 		sceneIds.forEach(function (id) {
-			ramp(buses[id].gain.gain, id === sceneId ? 1 : 0, 3.0);
+			ramp(buses[id].gain.gain, id === sceneId ? 1.6 : 0, 3.0);
 		});
 		setWeather(weather);
 		if (sceneId === "abyss") setAbyssState(abyss);
@@ -4960,7 +4960,7 @@ setup.audio = (function () {
 			filter.type = "lowpass";
 			filter.frequency.value = options.cutoff || 1100;
 			gain.gain.setValueAtTime(0, now);
-			gain.gain.linearRampToValueAtTime((options.gain || 0.008) / (index + 1), now + 0.04);
+			gain.gain.linearRampToValueAtTime((options.gain || 0.008) * 1.8 / (index + 1), now + 0.04);
 			gain.gain.exponentialRampToValueAtTime(0.00001, now + duration);
 			oscillator.connect(filter).connect(gain).connect(destination);
 			oscillator.start(now);
@@ -4981,7 +4981,7 @@ setup.audio = (function () {
 		filter.frequency.value = options.frequency || 420;
 		filter.Q.value = options.q || 0.5;
 		gain.gain.setValueAtTime(0, now);
-		gain.gain.linearRampToValueAtTime(options.gain || 0.007, now + Math.min(0.12, duration * 0.25));
+		gain.gain.linearRampToValueAtTime((options.gain || 0.007) * 1.8, now + Math.min(0.12, duration * 0.25));
 		gain.gain.exponentialRampToValueAtTime(0.00001, now + duration);
 		source.connect(filter).connect(gain).connect(options.destination || master);
 		source.start(now);
@@ -5134,11 +5134,11 @@ setup.audio = (function () {
 setup.renderSoundControl = function () {
 	var button = document.getElementById("global-sound");
 	if (!button) return;
-	var action = setup.audio.muted ? "소리 켜기" : "소리 끄기";
+	var debug = setup.audio.debugState();
+	var action = !debug.initialized ? "소리 시작" : (setup.audio.muted ? "소리 켜기" : "소리 끄기");
 	button.textContent = action;
 	button.setAttribute("aria-label", action);
-	button.setAttribute("aria-pressed", String(!setup.audio.muted));
-	var debug = setup.audio.debugState();
+	button.setAttribute("aria-pressed", String(debug.initialized && !setup.audio.muted));
 	button.dataset.audioInitialized = String(debug.initialized);
 	button.dataset.audioContext = debug.contextState;
 	button.dataset.audioScene = debug.currentScene || "";
@@ -5404,6 +5404,14 @@ $(document).on(":passagedisplay", function () {
 		soundButton.id = "global-sound";
 		soundButton.type = "button";
 		soundButton.addEventListener("click", function () {
+			var debug = setup.audio.debugState();
+			if (!debug.initialized) {
+				setup.audio.setMuted(false);
+				setup.audio.start();
+				setup.audio.setScene(debug.currentScene || "hub");
+				setup.audio.setWeather(State.variables.weatherState || {});
+				return;
+			}
 			setup.audio.setMuted(!setup.audio.muted);
 		});
 		document.body.appendChild(soundButton);
