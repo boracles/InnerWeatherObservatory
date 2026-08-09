@@ -4520,7 +4520,7 @@ setup.audio = (function () {
 	var visibilityHandler = null;
 	var startedByUser = false;
 	var readingActive = true;
-	var masterVolume = 0.82;
+	var masterVolume = 0.9;
 	var lighthouseRotation = 0.34;
 	var lastSfxAt = {};
 	var weather = { fog:0.15, rain:0, wave:0.2, wind:0.15, cloud:0.25, light:0.55 };
@@ -4757,7 +4757,7 @@ setup.audio = (function () {
 		if (typeof setup.renderSoundControl === "function") setup.renderSoundControl();
 		if (!api.initialized) return;
 		sceneIds.forEach(function (id) {
-			ramp(buses[id].gain.gain, id === sceneId ? 1.6 : 0, 3.0);
+			ramp(buses[id].gain.gain, id === sceneId ? 3.0 : 0, 2.2);
 		});
 		setWeather(weather);
 		if (sceneId === "abyss") setAbyssState(abyss);
@@ -4879,7 +4879,7 @@ setup.audio = (function () {
 			filter.type = "lowpass";
 			filter.frequency.value = options.cutoff || 1100;
 			gain.gain.setValueAtTime(0, now);
-			gain.gain.linearRampToValueAtTime((options.gain || 0.008) * 1.8 / (index + 1), now + 0.04);
+			gain.gain.linearRampToValueAtTime((options.gain || 0.008) * 3.6 / (index + 1), now + 0.04);
 			gain.gain.exponentialRampToValueAtTime(0.00001, now + duration);
 			oscillator.connect(filter).connect(gain).connect(destination);
 			oscillator.start(now);
@@ -4900,7 +4900,7 @@ setup.audio = (function () {
 		filter.frequency.value = options.frequency || 420;
 		filter.Q.value = options.q || 0.5;
 		gain.gain.setValueAtTime(0, now);
-		gain.gain.linearRampToValueAtTime((options.gain || 0.007) * 1.8, now + Math.min(0.12, duration * 0.25));
+		gain.gain.linearRampToValueAtTime((options.gain || 0.007) * 3.6, now + Math.min(0.12, duration * 0.25));
 		gain.gain.exponentialRampToValueAtTime(0.00001, now + duration);
 		source.connect(filter).connect(gain).connect(options.destination || master);
 		source.start(now);
@@ -5092,6 +5092,17 @@ setup.printObservationRecord = function () {
 			}
 		}, delay);
 	});
+};
+setup.compactAudioScene = function (passageName, movementMode) {
+	if (passageName === "간단 관측 요약" || passageName === "간단 관측 종료") return "record";
+	var compactPassages = ["거리두어 보기", "걱정과 보호", "필요와 다음 행동"];
+	if (compactPassages.indexOf(passageName) === -1) return "";
+	if (movementMode === "anxious") return "lighthouse";
+	if (movementMode === "heavy" || movementMode === "unclear") return "fog";
+	if (movementMode === "overwhelmed" || movementMode === "energized") {
+		return passageName === "걱정과 보호" ? "abyss" : "wave";
+	}
+	return "hub";
 };
 /* END INNER WEATHER AUDIO ENGINE */
 
@@ -5292,12 +5303,14 @@ $(document).on(":passagedisplay", function () {
 		!isHub &&
 		!isReading;
 	var abyssPassages = ["파도 심연", "파도 심연 조절"];
-	var audioScene = isWeatherRecord ? "record" :
+	var compactScene = setup.compactAudioScene(passage(), State.variables.movementMode);
+	var audioScene = compactScene || (isWeatherRecord ? "record" :
 		(isFogRoom ? "fog" :
 			(isWaveRoom
 				? (abyssPassages.indexOf(passage()) !== -1 ? "abyss" : "wave")
-				: (isLighthouseRoom ? "lighthouse" : "hub")));
+				: (isLighthouseRoom ? "lighthouse" : "hub"))));
 	if (setup.audio) {
+		var previousAudioScene = setup.audio.debugState().currentScene;
 		setup.audio.setScene(audioScene);
 		setup.audio.setWeather(State.variables.weatherState || {});
 		if (audioScene === "abyss") {
@@ -5309,6 +5322,13 @@ $(document).on(":passagedisplay", function () {
 		setup.audio.setReadingActive(
 			["등대 진입", "파도 진입", "안개 진입"].indexOf(passage()) === -1
 		);
+		if (compactScene && previousAudioScene !== audioScene && setup.audio.debugState().initialized) {
+			setup.audio.playSfx(
+				audioScene === "abyss" ? "submerge" :
+				(audioScene === "fog" ? "fogReveal" :
+					(audioScene === "lighthouse" ? "lighthouse" : "roomEnter"))
+			);
+		}
 		if (passage() === "관측 종료") setup.audio.stopAll();
 	}
 	var isObservation = !isDiscovery && !isHub && !isReading;
