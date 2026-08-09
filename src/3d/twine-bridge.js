@@ -453,6 +453,52 @@ function bridgeSync(data) {
   bridgeUpdateMarkers();
 }
 
+let bridgePrintRequestId = '';
+let bridgePrintFrame = 0;
+function bridgePrintObservation(data = {}) {
+  const requestId = String(data.requestId || '');
+  if (requestId && requestId === bridgePrintRequestId) return;
+  bridgePrintRequestId = requestId;
+  document.body.dataset.recordPrint = 'printing';
+  if (bridgePrintFrame) cancelAnimationFrame(bridgePrintFrame);
+  strip.position.z = 0;
+  strip.scaling.z = 1;
+  const record = data.record || {};
+  const marks = [record.part, record.concern, record.protection, record.next]
+    .map((value) => String(value || '').length)
+    .map((length) => Math.max(18, Math.min(180, 30 + length * 4)));
+  chartCtx.fillStyle = '#eee7d4';
+  chartCtx.fillRect(0, 0, 1024, 256);
+  chartCtx.strokeStyle = 'rgba(90,60,30,0.88)';
+  chartCtx.lineWidth = 3;
+  marks.forEach((width,index) => {
+    const y = 48 + index * 48;
+    chartCtx.beginPath();
+    chartCtx.moveTo(56,y);
+    chartCtx.lineTo(56 + width,y);
+    chartCtx.stroke();
+    chartCtx.fillRect(42,y - 3,7,7);
+  });
+  chartTex.update(false);
+  const started = performance.now();
+  const duration = 2600;
+  const tick = (now) => {
+    const raw = Math.min(1,(now - started) / duration);
+    const eased = 1 - Math.pow(1 - raw,3);
+    strip.scaling.z = 1 + eased * .72;
+    strip.position.z = eased * .055;
+    chart.rotation.x = Math.sin(raw * Math.PI * 10) * .018 * (1 - raw);
+    if (raw < 1) bridgePrintFrame = requestAnimationFrame(tick);
+    else {
+      chart.rotation.x = 0;
+      bridgePrintFrame = 0;
+      document.body.dataset.recordPrint = 'printed';
+      bridgePost('observation-record-printed',{requestId});
+    }
+  };
+  bridgePrintFrame = requestAnimationFrame(tick);
+}
+
 window.addEventListener('message',(event) => {
   const data = event.data || {};
   if (data.type === 'inner-weather-sync') {
@@ -487,6 +533,8 @@ window.addEventListener('message',(event) => {
     window.__observationStarted = true;
   } else if (data.type === 'word-echo') {
     window.__lastWordEcho = String(data.text || '');
+  } else if (data.type === 'print-observation-record') {
+    bridgePrintObservation(data);
   }
 });
 
