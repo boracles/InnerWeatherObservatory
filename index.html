@@ -3023,6 +3023,7 @@ setup.bindDiscoveryInput = function (kind) {
 		error.textContent = "";
 		if (isState) {
 			variables.customState = text;
+			variables.focusPart = text;
 			variables.stateSelection = { id:"custom", label:text };
 			variables.movementSelection = variables.stateSelection;
 			variables.movementMode = "custom";
@@ -3032,7 +3033,7 @@ setup.bindDiscoveryInput = function (kind) {
 			variables.stateBehaviorSelection = { id:"custom", label:text };
 		}
 		setup.setInputFocus(false);
-		Engine.play(isState ? "상태에서의 행동" : "마음의 시야");
+		Engine.play(isState ? "거리두어 보기" : "마음의 시야");
 	});
 	textarea.addEventListener("input", function () {
 		if (textarea.value.trim()) error.textContent = "";
@@ -5236,6 +5237,8 @@ $(document).on(":passagedisplay", function () {
 	var stageMap = {
 		"ABOUT":"About",
 		"첫 진입":"관측 전","들어다보기":"현재 상태","상태 직접 적기":"현재 상태",
+		"거리두어 보기":"거리두기","걱정과 보호":"걱정과 보호","필요와 다음 행동":"지금 필요한 것",
+		"간단 관측 요약":"관측 기록","간단 관측 종료":"관측 기록",
 		"상태에서의 행동":"현재 반응","행동 직접 적기":"현재 반응",
 		"멈추기 어려운 감각":"현재 반응","마음의 시야":"현재 상태",
 		"날씨 만들기":"날씨 만들기","몸의 자리":"몸의 감각","감각의 질감":"몸의 감각","떠오르는 장면":"몸의 감각",
@@ -5264,7 +5267,8 @@ $(document).on(":passagedisplay", function () {
 	$("#distance-data").text(State.variables.distancePhrase || "—");
 	var discoveryPassages = [
 		"첫 진입","들어다보기","상태 직접 적기","상태에서의 행동","행동 직접 적기",
-		"멈추기 어려운 감각","마음의 시야","날씨 만들기","몸의 자리","감각의 질감","떠오르는 장면"
+		"멈추기 어려운 감각","마음의 시야","날씨 만들기","몸의 자리","감각의 질감","떠오르는 장면",
+		"거리두어 보기","걱정과 보호","필요와 다음 행동","간단 관측 요약","간단 관측 종료"
 	];
 	var isDiscovery = discoveryPassages.indexOf(passage()) !== -1;
 	var isFirstEntry = passage() === "첫 진입";
@@ -5500,6 +5504,8 @@ if (!setup.audioInteractionBound) {
 &lt;&lt;set $roomPermissions = { lighthouse:&quot;&quot;, wave:&quot;&quot;, fog:&quot;&quot; }&gt;&gt;
 &lt;&lt;set $roomConditions = { lighthouse:&quot;&quot;, wave:&quot;&quot;, fog:&quot;&quot; }&gt;&gt;
 &lt;&lt;set $primaryRoomChoice = &quot;&quot;&gt;&gt;&lt;&lt;set $finalPosition = &quot;&quot;&gt;&gt;&lt;&lt;set $smallAction = &quot;&quot;&gt;&gt;
+&lt;&lt;set $focusPart = &quot;&quot;&gt;&gt;&lt;&lt;set $focusDistance = &quot;&quot;&gt;&gt;
+&lt;&lt;set $focusConcern = &quot;&quot;&gt;&gt;&lt;&lt;set $focusProtection = &quot;&quot;&gt;&gt;&lt;&lt;set $focusNext = &quot;&quot;&gt;&gt;
 &lt;&lt;set $selfLight = 0.2&gt;&gt;
 &lt;&lt;set $returnPassage = &quot;들어다보기&quot;&gt;&gt;
 &lt;&lt;set $sceneMode = &quot;hub&quot;&gt;&gt;&lt;&lt;set $currentRoom = &quot;hub&quot;&gt;&gt;
@@ -5564,18 +5570,80 @@ if (!setup.audioInteractionBound) {
 &lt;&lt;set $customBehavior = &quot;&quot;&gt;&gt;
 &lt;&lt;set $movementPressureReason = &quot;&quot;&gt;&gt;&lt;&lt;set $movementPressureCustom = &quot;&quot;&gt;&gt;
 &lt;div class=&quot;intro-ui&quot;&gt;
-&lt;h1&gt;지금의 나와 가장 가까운 상태는 무엇인가요?&lt;/h1&gt;
-&lt;p&gt;여러 상태가 겹친다면, 지금 가장 크게 느껴지는 것을 골라주세요.&lt;/p&gt;
+&lt;p class=&quot;observation-step&quot;&gt;1 / 5 · 가장 눈에 띄는 부분&lt;/p&gt;
+&lt;h1&gt;지금 내 안에서 가장 눈에 띄는 감정이나 반응은 무엇인가요?&lt;/h1&gt;
+&lt;p&gt;여러 가지가 겹친다면 하나만 골라도 충분합니다.&lt;/p&gt;
 &lt;div class=&quot;choices story-choices&quot;&gt;
-[[생각과 감정이 한꺼번에 밀려와 벅차다-&gt;상태에서의 행동][$movementMode = &quot;overwhelmed&quot;; $stateSelection = {id:&quot;overwhelmed&quot;,label:&quot;생각과 감정이 한꺼번에 밀려와 벅차다&quot;}; $movementSelection = $stateSelection; $weatherMode = &quot;wave&quot;]]
-[[불안하고 긴장되어 마음을 놓기 어렵다-&gt;상태에서의 행동][$movementMode = &quot;anxious&quot;; $stateSelection = {id:&quot;anxious&quot;,label:&quot;불안하고 긴장되어 마음을 놓기 어렵다&quot;}; $movementSelection = $stateSelection; $weatherMode = &quot;watch&quot;]]
-[[기운이 없고 무겁게 가라앉아 있다-&gt;상태에서의 행동][$movementMode = &quot;heavy&quot;; $stateSelection = {id:&quot;heavy&quot;,label:&quot;기운이 없고 무겁게 가라앉아 있다&quot;}; $movementSelection = $stateSelection; $weatherMode = &quot;cloud&quot;]]
-[[기대되거나 들떠 에너지가 높다-&gt;상태에서의 행동][$movementMode = &quot;energized&quot;; $stateSelection = {id:&quot;energized&quot;,label:&quot;기대되거나 들떠 에너지가 높다&quot;}; $movementSelection = $stateSelection; $weatherMode = &quot;bright&quot;]]
-[[무엇을 느끼는지 잘 모르겠다-&gt;상태에서의 행동][$movementMode = &quot;unclear&quot;; $stateSelection = {id:&quot;unclear&quot;,label:&quot;무엇을 느끼는지 잘 모르겠다&quot;}; $movementSelection = $stateSelection; $weatherMode = &quot;fog&quot;]]
-[[지금은 비교적 편안하고 안정되어 있다-&gt;상태에서의 행동][$movementMode = &quot;calm&quot;; $stateSelection = {id:&quot;calm&quot;,label:&quot;지금은 비교적 편안하고 안정되어 있다&quot;}; $movementSelection = $stateSelection; $weatherMode = &quot;calm&quot;]]
+[[생각과 감정이 한꺼번에 밀려오는 부분-&gt;거리두어 보기][$movementMode = &quot;overwhelmed&quot;; $focusPart = &quot;생각과 감정이 한꺼번에 밀려오는 부분&quot;; $stateSelection = {id:&quot;overwhelmed&quot;,label:$focusPart}; $movementSelection = $stateSelection; $weatherMode = &quot;wave&quot;]]
+[[계속 살피고 대비하는 부분-&gt;거리두어 보기][$movementMode = &quot;anxious&quot;; $focusPart = &quot;계속 살피고 대비하는 부분&quot;; $stateSelection = {id:&quot;anxious&quot;,label:$focusPart}; $movementSelection = $stateSelection; $weatherMode = &quot;watch&quot;]]
+[[무겁게 가라앉거나 멈추는 부분-&gt;거리두어 보기][$movementMode = &quot;heavy&quot;; $focusPart = &quot;무겁게 가라앉거나 멈추는 부분&quot;; $stateSelection = {id:&quot;heavy&quot;,label:$focusPart}; $movementSelection = $stateSelection; $weatherMode = &quot;cloud&quot;]]
+[[서두르거나 계속 움직이려는 부분-&gt;거리두어 보기][$movementMode = &quot;energized&quot;; $focusPart = &quot;서두르거나 계속 움직이려는 부분&quot;; $stateSelection = {id:&quot;energized&quot;,label:$focusPart}; $movementSelection = $stateSelection; $weatherMode = &quot;bright&quot;]]
+[[아무것도 느끼지 않게 하는 부분-&gt;거리두어 보기][$movementMode = &quot;unclear&quot;; $focusPart = &quot;아무것도 느끼지 않게 하는 부분&quot;; $stateSelection = {id:&quot;unclear&quot;,label:$focusPart}; $movementSelection = $stateSelection; $weatherMode = &quot;fog&quot;]]
+[[지금은 눈에 띄는 부분이 없다-&gt;간단 관측 종료][$movementMode = &quot;calm&quot;; $focusPart = &quot;지금은 눈에 띄는 부분이 없음&quot;; $stateSelection = {id:&quot;calm&quot;,label:$focusPart}; $movementSelection = $stateSelection; $weatherMode = &quot;calm&quot;]]
 &lt;/div&gt;
-&lt;div class=&quot;custom-choice-link&quot;&gt;[[내 상태를 직접 적기-&gt;상태 직접 적기]]&lt;/div&gt;
-&lt;/div&gt;</tw-passagedata><tw-passagedata pid="6" name="상태 직접 적기" tags="" position="320,520" size="170,110">&lt;div class=&quot;custom-input-panel&quot;&gt;
+&lt;div class=&quot;custom-choice-link&quot;&gt;[[내 말로 적기-&gt;상태 직접 적기]]&lt;/div&gt;
+&lt;/div&gt;</tw-passagedata><tw-passagedata pid="6" name="거리두어 보기" tags="" position="520,700" size="180,120">&lt;div class=&quot;room-input-stage compact-observation&quot;&gt;
+&lt;p class=&quot;observation-step&quot;&gt;2 / 5 · 조금 떨어져 보기&lt;/p&gt;
+&lt;h1&gt;‘&lt;&lt;print $focusPart&gt;&gt;’을 잠시 날씨처럼 바라본다면, 어떤 거리가 편한가요?&lt;/h1&gt;
+&lt;p&gt;없애거나 설명하려 하지 않아도 됩니다. 지금 가능한 만큼만 골라주세요.&lt;/p&gt;
+&lt;div class=&quot;choices&quot;&gt;
+[[바로 곁에서 느껴도 괜찮다-&gt;걱정과 보호][$focusDistance = &quot;바로 곁에서 느껴도 괜찮은 거리&quot;]]
+[[한 걸음 떨어져 바라보고 싶다-&gt;걱정과 보호][$focusDistance = &quot;한 걸음 떨어져 바라보는 거리&quot;]]
+[[멀리 있는 날씨처럼 보고 싶다-&gt;걱정과 보호][$focusDistance = &quot;멀리 있는 날씨처럼 바라보는 거리&quot;]]
+[[지금은 거리를 정하기 어렵다-&gt;걱정과 보호][$focusDistance = &quot;아직 알 수 없음&quot;]]
+[[이 질문은 건너뛴다-&gt;걱정과 보호][$focusDistance = &quot;건너뜀&quot;]]
+&lt;/div&gt;
+&lt;/div&gt;</tw-passagedata><tw-passagedata pid="7" name="걱정과 보호" tags="" position="740,700" size="190,120">&lt;div class=&quot;room-input-stage compact-observation&quot;&gt;
+&lt;p class=&quot;observation-step&quot;&gt;3 / 5 · 걱정과 보호&lt;/p&gt;
+&lt;h1&gt;이 부분은 무엇을 걱정하거나 지키려는 것 같나요?&lt;/h1&gt;
+&lt;p&gt;처음 고른 ‘&lt;&lt;print $focusPart&gt;&gt;’에 가까운 선택지를 먼저 모았습니다.&lt;/p&gt;
+&lt;div class=&quot;choices&quot;&gt;
+&lt;&lt;if $movementMode is &quot;anxious&quot;&gt;&gt;
+[[중요한 신호를 놓치지 않으려 한다-&gt;필요와 다음 행동][$focusConcern = &quot;중요한 신호를 놓칠까 걱정함&quot;; $focusProtection = &quot;안전과 대비&quot;]]
+[[누군가 실망하거나 나를 탓할까 걱정한다-&gt;필요와 다음 행동][$focusConcern = &quot;누군가 실망하거나 탓할까 걱정함&quot;; $focusProtection = &quot;관계와 인정&quot;]]
+&lt;&lt;elseif $movementMode is &quot;overwhelmed&quot;&gt;&gt;
+[[감정이 더 커져 감당하기 어려울까 걱정한다-&gt;필요와 다음 행동][$focusConcern = &quot;감정이 감당하기 어려워질까 걱정함&quot;; $focusProtection = &quot;버틸 수 있는 상태&quot;]]
+[[한꺼번에 너무 많은 것을 놓칠까 걱정한다-&gt;필요와 다음 행동][$focusConcern = &quot;중요한 것을 한꺼번에 놓칠까 걱정함&quot;; $focusProtection = &quot;통제감과 우선순위&quot;]]
+&lt;&lt;elseif $movementMode is &quot;heavy&quot; or $movementMode is &quot;unclear&quot;&gt;&gt;
+[[더 다치거나 지치지 않게 거리를 만든다-&gt;필요와 다음 행동][$focusConcern = &quot;더 다치거나 지칠까 걱정함&quot;; $focusProtection = &quot;회복할 여유&quot;]]
+[[감당하기 어려운 감정이 올라오지 않게 막는다-&gt;필요와 다음 행동][$focusConcern = &quot;감당하기 어려운 감정이 올라올까 걱정함&quot;; $focusProtection = &quot;정서적 안전&quot;]]
+&lt;&lt;else&gt;&gt;
+[[멈추면 뒤처지거나 중요한 일을 놓칠까 걱정한다-&gt;필요와 다음 행동][$focusConcern = &quot;멈추면 뒤처지거나 놓칠까 걱정함&quot;; $focusProtection = &quot;성취와 안정&quot;]]
+[[가만히 있으면 불안해질까 걱정한다-&gt;필요와 다음 행동][$focusConcern = &quot;가만히 있으면 불안해질까 걱정함&quot;; $focusProtection = &quot;통제감&quot;]]
+&lt;&lt;/if&gt;&gt;
+[[정확히는 모르지만 나를 지키려는 것 같다-&gt;필요와 다음 행동][$focusConcern = &quot;아직 알 수 없음&quot;; $focusProtection = &quot;나를 지키려는 의도&quot;]]
+[[지금은 이유를 알아내지 않고 넘어간다-&gt;필요와 다음 행동][$focusConcern = &quot;건너뜀&quot;; $focusProtection = &quot;건너뜀&quot;]]
+&lt;/div&gt;
+&lt;/div&gt;</tw-passagedata><tw-passagedata pid="8" name="필요와 다음 행동" tags="" position="980,700" size="190,120">&lt;div class=&quot;room-input-stage compact-observation&quot;&gt;
+&lt;p class=&quot;observation-step&quot;&gt;4 / 5 · 지금 필요한 것&lt;/p&gt;
+&lt;h1&gt;이 부분을 고치지 않은 채, 지금 나에게 해줄 수 있는 작은 일은 무엇인가요?&lt;/h1&gt;
+&lt;div class=&quot;choices&quot;&gt;
+[[1분 동안 멈추고 몸을 느낀다-&gt;간단 관측 요약][$focusNext = &quot;1분 동안 멈추고 몸 느끼기&quot;]]
+[[해야 할 일을 하나만 남긴다-&gt;간단 관측 요약][$focusNext = &quot;해야 할 일을 하나만 남기기&quot;]]
+[[물이나 음식, 휴식처럼 기본적인 필요를 챙긴다-&gt;간단 관측 요약][$focusNext = &quot;기본적인 필요 챙기기&quot;]]
+[[믿을 만한 사람에게 지금 상태를 짧게 알린다-&gt;간단 관측 요약][$focusNext = &quot;믿을 만한 사람에게 짧게 알리기&quot;]]
+[[오늘은 관찰한 것만으로 마친다-&gt;간단 관측 요약][$focusNext = &quot;오늘은 관찰한 것만으로 마치기&quot;]]
+[[아직 무엇이 필요한지 모르겠다-&gt;간단 관측 요약][$focusNext = &quot;아직 알 수 없음&quot;]]
+&lt;/div&gt;
+&lt;/div&gt;</tw-passagedata><tw-passagedata pid="9" name="간단 관측 요약" tags="" position="1220,700" size="190,120">&lt;div class=&quot;compact-summary&quot;&gt;
+&lt;p class=&quot;observation-step&quot;&gt;5 / 5 · 짧은 기록&lt;/p&gt;
+&lt;h1&gt;오늘의 내면 날씨&lt;/h1&gt;
+&lt;p&gt;오늘 가장 눈에 띈 것은 &lt;strong&gt;‘&lt;&lt;print $focusPart&gt;&gt;’&lt;/strong&gt;이었습니다.&lt;/p&gt;
+&lt;&lt;if $focusDistance isnot &quot;건너뜀&quot;&gt;&gt;&lt;p&gt;지금 가능한 거리는 &lt;strong&gt;&lt;&lt;print $focusDistance&gt;&gt;&lt;/strong&gt;입니다.&lt;/p&gt;&lt;&lt;/if&gt;&gt;
+&lt;&lt;if $focusConcern isnot &quot;건너뜀&quot;&gt;&gt;&lt;p&gt;이 부분이 걱정하는 것은 &lt;strong&gt;&lt;&lt;print $focusConcern&gt;&gt;&lt;/strong&gt;입니다.&lt;/p&gt;&lt;&lt;/if&gt;&gt;
+&lt;&lt;if $focusProtection isnot &quot;건너뜀&quot;&gt;&gt;&lt;p&gt;이 부분은 &lt;strong&gt;&lt;&lt;print $focusProtection&gt;&gt;&lt;/strong&gt;을 지키려는 것일 수 있습니다.&lt;/p&gt;&lt;&lt;/if&gt;&gt;
+&lt;p&gt;지금의 선택은 &lt;strong&gt;&lt;&lt;print $focusNext&gt;&gt;&lt;/strong&gt;입니다.&lt;/p&gt;
+&lt;div class=&quot;transmission&quot;&gt;이 기록은 진단이나 해석이 아니라, 지금의 반응을 잠시 바라본 관찰입니다. 이유를 모두 알아내지 않아도 충분합니다.&lt;/div&gt;
+&lt;div class=&quot;choices&quot;&gt;
+[[관측을 마친다-&gt;관측 종료]]
+&lt;&lt;link &quot;다른 부분을 살펴본다&quot;&gt;&gt;&lt;&lt;set $focusDistance = &quot;&quot;&gt;&gt;&lt;&lt;set $focusConcern = &quot;&quot;&gt;&gt;&lt;&lt;set $focusProtection = &quot;&quot;&gt;&gt;&lt;&lt;set $focusNext = &quot;&quot;&gt;&gt;&lt;&lt;goto &quot;들어다보기&quot;&gt;&gt;&lt;&lt;/link&gt;&gt;
+&lt;/div&gt;
+&lt;/div&gt;</tw-passagedata><tw-passagedata pid="10" name="간단 관측 종료" tags="" position="1220,860" size="190,100">&lt;div class=&quot;compact-summary&quot;&gt;
+&lt;p class=&quot;observation-step&quot;&gt;관측 완료&lt;/p&gt;
+&lt;h1&gt;지금은 잔잔한 날씨입니다&lt;/h1&gt;
+&lt;p&gt;눈에 띄는 부분이 없다는 관찰도 충분합니다. 더 깊이 찾거나 이름 붙일 필요 없이 여기서 마칠 수 있습니다.&lt;/p&gt;
+&lt;div class=&quot;choices&quot;&gt;[[관측을 마친다-&gt;관측 종료]] [[그래도 살펴본다-&gt;거리두어 보기]]&lt;/div&gt;
+&lt;/div&gt;</tw-passagedata><tw-passagedata pid="11" name="상태 직접 적기" tags="" position="320,520" size="170,110">&lt;div class=&quot;custom-input-panel&quot;&gt;
 &lt;h2&gt;지금의 상태를 내 말로 적어주세요.&lt;/h2&gt;
 &lt;textarea id=&quot;discovery-custom-input&quot; rows=&quot;4&quot; maxlength=&quot;500&quot; autofocus&gt;&lt;/textarea&gt;
 &lt;div id=&quot;input-error&quot;&gt;&lt;/div&gt;
@@ -5584,7 +5652,7 @@ if (!setup.audioInteractionBound) {
 &lt;button id=&quot;discovery-input-save&quot; type=&quot;button&quot; class=&quot;primary&quot;&gt;이 문장을 남긴다&lt;/button&gt;
 &lt;/div&gt;
 &lt;/div&gt;
-&lt;&lt;run setTimeout(function(){ setup.bindDiscoveryInput(&quot;state&quot;); },0)&gt;&gt;</tw-passagedata><tw-passagedata pid="7" name="상태에서의 행동" tags="" position="500,350" size="170,110">&lt;div class=&quot;room-input-stage&quot;&gt;
+&lt;&lt;run setTimeout(function(){ setup.bindDiscoveryInput(&quot;state&quot;); },0)&gt;&gt;</tw-passagedata><tw-passagedata pid="12" name="상태에서의 행동" tags="" position="500,350" size="170,110">&lt;div class=&quot;room-input-stage&quot;&gt;
 &lt;h1&gt;그럴 때 나는 주로 어떻게 하나요?&lt;/h1&gt;
 &lt;div class=&quot;choices&quot;&gt;
 [[그 느낌을 따라 바로 움직인다-&gt;마음의 시야][$stateBehaviorSelection = {id:&quot;follow_energy&quot;,label:&quot;그 느낌을 따라 바로 움직인다&quot;}]]
@@ -5596,7 +5664,7 @@ if (!setup.audioInteractionBound) {
 [[아직 어떻게 하는지 잘 모르겠다-&gt;마음의 시야][$stateBehaviorSelection = {id:&quot;unclear&quot;,label:&quot;아직 어떻게 하는지 잘 모르겠다&quot;}]]
 &lt;/div&gt;
 &lt;div class=&quot;custom-choice-link&quot;&gt;[[내 행동을 직접 적기-&gt;행동 직접 적기]]&lt;/div&gt;
-&lt;/div&gt;</tw-passagedata><tw-passagedata pid="8" name="행동 직접 적기" tags="" position="500,520" size="170,110">&lt;div class=&quot;custom-input-panel&quot;&gt;
+&lt;/div&gt;</tw-passagedata><tw-passagedata pid="13" name="행동 직접 적기" tags="" position="500,520" size="170,110">&lt;div class=&quot;custom-input-panel&quot;&gt;
 &lt;h2&gt;그럴 때 주로 어떻게 하는지 내 말로 적어주세요.&lt;/h2&gt;
 &lt;textarea id=&quot;discovery-custom-input&quot; rows=&quot;4&quot; maxlength=&quot;500&quot; autofocus&gt;&lt;/textarea&gt;
 &lt;div id=&quot;input-error&quot;&gt;&lt;/div&gt;
@@ -5605,7 +5673,7 @@ if (!setup.audioInteractionBound) {
 &lt;button id=&quot;discovery-input-save&quot; type=&quot;button&quot; class=&quot;primary&quot;&gt;이 문장을 남긴다&lt;/button&gt;
 &lt;/div&gt;
 &lt;/div&gt;
-&lt;&lt;run setTimeout(function(){ setup.bindDiscoveryInput(&quot;behavior&quot;); },0)&gt;&gt;</tw-passagedata><tw-passagedata pid="9" name="멈추기 어려운 감각" tags="" position="680,520" size="170,110">&lt;div class=&quot;room-input-stage&quot;&gt;
+&lt;&lt;run setTimeout(function(){ setup.bindDiscoveryInput(&quot;behavior&quot;); },0)&gt;&gt;</tw-passagedata><tw-passagedata pid="14" name="멈추기 어려운 감각" tags="" position="680,520" size="170,110">&lt;div class=&quot;room-input-stage&quot;&gt;
 &lt;h1&gt;잠시 멈춘다고 생각하면, 어떤 느낌이 먼저 드나요?&lt;/h1&gt;
 &lt;div class=&quot;choices&quot;&gt;
 [[해야 할 일을 놓칠 것 같다-&gt;마음의 시야][$movementPressureReason = &quot;해야 할 일을 놓칠 것 같다&quot;]]
@@ -5619,7 +5687,7 @@ if (!setup.audioInteractionBound) {
 &lt;&lt;button &quot;내 말로 직접 적기&quot;&gt;&gt;&lt;&lt;run setup.openPressureInput()&gt;&gt;&lt;&lt;/button&gt;&gt;
 &lt;/div&gt;
 &lt;/div&gt;
-&lt;div class=&quot;custom-input-host&quot;&gt;&lt;/div&gt;</tw-passagedata><tw-passagedata pid="10" name="마음의 시야" tags="" position="680,350" size="140,100">&lt;div class=&quot;intro-ui story-ui second-question-ui&quot;&gt;
+&lt;div class=&quot;custom-input-host&quot;&gt;&lt;/div&gt;</tw-passagedata><tw-passagedata pid="15" name="마음의 시야" tags="" position="680,350" size="140,100">&lt;div class=&quot;intro-ui story-ui second-question-ui&quot;&gt;
 &lt;h1&gt;지금의 상태를 조금 더 살펴보면, 무엇이 가장 가까운가요?&lt;/h1&gt;
 &lt;div class=&quot;choices story-choices story-choices--four&quot;&gt;
 [[어떤 감정인지 비교적 분명하다-&gt;날씨 만들기][$visibilityMode = &quot;clear&quot;]]
@@ -5627,12 +5695,12 @@ if (!setup.audioInteractionBound) {
 [[울컥하거나 눈물이 날 것 같다-&gt;날씨 만들기][$visibilityMode = &quot;rain&quot;]]
 [[아무것도 잘 느껴지지 않는다-&gt;날씨 만들기][$visibilityMode = &quot;numb&quot;]]
 &lt;/div&gt;
-&lt;/div&gt;</tw-passagedata><tw-passagedata pid="11" name="날씨 만들기" tags="" position="840,350" size="160,110">&lt;div class=&quot;weather-builder-stage&quot;&gt;
+&lt;/div&gt;</tw-passagedata><tw-passagedata pid="16" name="날씨 만들기" tags="" position="840,350" size="160,110">&lt;div class=&quot;weather-builder-stage&quot;&gt;
 &lt;h1&gt;지금의 상태와 닮은 날씨를 만들어보세요.&lt;/h1&gt;
 &lt;p&gt;날씨를 좋게 바꾸는 과정이 아닙니다. 지금 느껴지는 정도와 닮도록 안개, 파도, 비, 바람, 구름과 빛을 움직여보세요.&lt;/p&gt;
 &lt;/div&gt;
 &lt;div class=&quot;weather-builder-host&quot;&gt;&lt;/div&gt;
-&lt;&lt;run setTimeout(function(){ setup.openWeatherBuilder(&quot;initial&quot;); },0)&gt;&gt;</tw-passagedata><tw-passagedata pid="12" name="몸의 자리" tags="" position="1020,350" size="160,110">&lt;div class=&quot;room-input-stage&quot;&gt;
+&lt;&lt;run setTimeout(function(){ setup.openWeatherBuilder(&quot;initial&quot;); },0)&gt;&gt;</tw-passagedata><tw-passagedata pid="17" name="몸의 자리" tags="" position="1020,350" size="160,110">&lt;div class=&quot;room-input-stage&quot;&gt;
 &lt;h1&gt;이 날씨는 몸의 어디에서 가장 먼저 느껴지나요?&lt;/h1&gt;
 &lt;div class=&quot;choices&quot;&gt;
 [[머리와 얼굴-&gt;감각의 질감][$bodyArea = &quot;머리와 얼굴&quot;]]
@@ -5647,7 +5715,7 @@ if (!setup.audioInteractionBound) {
 &lt;&lt;button &quot;내 말로 직접 적기&quot;&gt;&gt;&lt;&lt;run setup.openReflectionInput(&quot;bodyArea&quot;,&quot;몸의 어디에서 가장 먼저 느껴지나요?&quot;,&quot;감각의 질감&quot;)&gt;&gt;&lt;&lt;/button&gt;&gt;
 &lt;/div&gt;
 &lt;/div&gt;
-&lt;div class=&quot;custom-input-host&quot;&gt;&lt;/div&gt;</tw-passagedata><tw-passagedata pid="13" name="감각의 질감" tags="" position="1200,350" size="160,110">&lt;div class=&quot;room-input-stage&quot;&gt;
+&lt;div class=&quot;custom-input-host&quot;&gt;&lt;/div&gt;</tw-passagedata><tw-passagedata pid="18" name="감각의 질감" tags="" position="1200,350" size="160,110">&lt;div class=&quot;room-input-stage&quot;&gt;
 &lt;h1&gt;그 자리의 감각은 무엇과 가장 가까운가요?&lt;/h1&gt;
 &lt;div class=&quot;choices&quot;&gt;
 [[단단하게 굳어 있다-&gt;떠오르는 장면][$bodyTexture = &quot;단단하게 굳어 있음&quot;]]
@@ -5662,7 +5730,7 @@ if (!setup.audioInteractionBound) {
 &lt;&lt;button &quot;내 말로 직접 적기&quot;&gt;&gt;&lt;&lt;run setup.openReflectionInput(&quot;bodyTexture&quot;,&quot;이 감각의 질감이나 움직임을 내 말로 적는다면?&quot;,&quot;떠오르는 장면&quot;)&gt;&gt;&lt;&lt;/button&gt;&gt;
 &lt;/div&gt;
 &lt;/div&gt;
-&lt;div class=&quot;custom-input-host&quot;&gt;&lt;/div&gt;</tw-passagedata><tw-passagedata pid="14" name="떠오르는 장면" tags="" position="1380,350" size="160,110">&lt;div class=&quot;room-input-stage&quot;&gt;
+&lt;div class=&quot;custom-input-host&quot;&gt;&lt;/div&gt;</tw-passagedata><tw-passagedata pid="19" name="떠오르는 장면" tags="" position="1380,350" size="160,110">&lt;div class=&quot;room-input-stage&quot;&gt;
 &lt;h1&gt;이 날씨와 함께 떠오르는 장면이나 생각이 있나요?&lt;/h1&gt;
 &lt;div class=&quot;choices&quot;&gt;
 [[해야 할 일이나 놓치면 안 되는 일이 떠오른다-&gt;관측소 허브][$weatherContext = &quot;해야 할 일이나 놓치면 안 되는 일&quot;]]
@@ -5675,14 +5743,14 @@ if (!setup.audioInteractionBound) {
 &lt;&lt;button &quot;내 말로 직접 적기&quot;&gt;&gt;&lt;&lt;run setup.openReflectionInput(&quot;weatherContext&quot;,&quot;이 날씨와 함께 떠오르는 장면이나 생각을 적어주세요.&quot;,&quot;관측소 허브&quot;)&gt;&gt;&lt;&lt;/button&gt;&gt;
 &lt;/div&gt;
 &lt;/div&gt;
-&lt;div class=&quot;custom-input-host&quot;&gt;&lt;/div&gt;</tw-passagedata><tw-passagedata pid="15" name="관측소 허브" tags="" position="1560,350" size="170,120">&lt;&lt;set $sceneMode = &quot;hub&quot;&gt;&gt;&lt;&lt;set $currentRoom = &quot;hub&quot;&gt;&gt;&lt;&lt;set $permissionMode = &quot;&quot;&gt;&gt;
+&lt;div class=&quot;custom-input-host&quot;&gt;&lt;/div&gt;</tw-passagedata><tw-passagedata pid="20" name="관측소 허브" tags="" position="1560,350" size="170,120">&lt;&lt;set $sceneMode = &quot;hub&quot;&gt;&gt;&lt;&lt;set $currentRoom = &quot;hub&quot;&gt;&gt;&lt;&lt;set $permissionMode = &quot;&quot;&gt;&gt;
 &lt;&lt;run setup.captureRoomWeatherStart()&gt;&gt;
 &lt;&lt;run setup.persistRelationships()&gt;&gt;
 &lt;div id=&quot;hubAction&quot; class=&quot;hub-ui&quot;&gt;&lt;/div&gt;
-&lt;&lt;run setup.scheduleHubUI()&gt;&gt;</tw-passagedata><tw-passagedata pid="16" name="현재 날씨 재관측" tags="" position="1560,520" size="170,100">&lt;&lt;set $sceneMode = &quot;hub&quot;&gt;&gt;
+&lt;&lt;run setup.scheduleHubUI()&gt;&gt;</tw-passagedata><tw-passagedata pid="21" name="현재 날씨 재관측" tags="" position="1560,520" size="170,100">&lt;&lt;set $sceneMode = &quot;hub&quot;&gt;&gt;
 &lt;h1&gt;지금의 날씨를 다시 확인합니다&lt;/h1&gt;
 &lt;p&gt;지난 답을 현재로 고정하지 않습니다. 지금 가장 가까운 움직임부터 다시 살펴봅니다.&lt;/p&gt;
-&lt;div class=&quot;choices&quot;&gt;[[지금의 상태를 다시 살펴본다-&gt;들어다보기]] [[관측소로 돌아간다-&gt;관측소 허브]]&lt;/div&gt;</tw-passagedata><tw-passagedata pid="17" name="등대 진입" tags="" position="1880,80" size="170,120">&lt;&lt;run setup.enterRoom(&quot;lighthouse&quot;)&gt;&gt;
+&lt;div class=&quot;choices&quot;&gt;[[지금의 상태를 다시 살펴본다-&gt;들어다보기]] [[관측소로 돌아간다-&gt;관측소 허브]]&lt;/div&gt;</tw-passagedata><tw-passagedata pid="22" name="등대 진입" tags="" position="1880,80" size="170,120">&lt;&lt;run setup.enterRoom(&quot;lighthouse&quot;)&gt;&gt;
 &lt;&lt;run setup.startLighthouseInterior()&gt;&gt;
 &lt;div class=&quot;lighthouse-entry-stage room-input-stage&quot;&gt;
 &lt;div class=&quot;lighthouse-scene-copy&quot;&gt;
@@ -5707,7 +5775,7 @@ if (!setup.audioInteractionBound) {
 &lt;/div&gt;
 &lt;/div&gt;
 &lt;/div&gt;
-&lt;div class=&quot;custom-input-host&quot;&gt;&lt;/div&gt;</tw-passagedata><tw-passagedata pid="18" name="등대 빛의 속도" tags="" position="2080,80" size="180,120">&lt;div class=&quot;lighthouse-lens-stage room-input-stage&quot;&gt;
+&lt;div class=&quot;custom-input-host&quot;&gt;&lt;/div&gt;</tw-passagedata><tw-passagedata pid="23" name="등대 빛의 속도" tags="" position="2080,80" size="180,120">&lt;div class=&quot;lighthouse-lens-stage room-input-stage&quot;&gt;
 &lt;h1&gt;렌즈의 속도를 직접 정해봅니다&lt;/h1&gt;
 &lt;p&gt;어떤 속도를 선택해도 날씨의 의미가 달라지지는 않습니다. 지금 이 부분이 수평선을 살피고 싶은 방식만 남깁니다.&lt;/p&gt;
 &lt;h2&gt;지금 렌즈는 어떻게 움직이면 좋을까요?&lt;/h2&gt;
@@ -5717,7 +5785,7 @@ if (!setup.audioInteractionBound) {
 &lt;&lt;link &quot;잠시 멈춰본다&quot;&gt;&gt;&lt;&lt;set $lighthouseSweepMode = &quot;잠시 멈춰본다&quot;&gt;&gt;&lt;&lt;run setup.setLighthouseLensSpeed(&quot;pause&quot;,&quot;부분의 몸 감각&quot;)&gt;&gt;&lt;&lt;/link&gt;&gt;
 &lt;&lt;link &quot;지금의 속도를 유지한다&quot;&gt;&gt;&lt;&lt;set $lighthouseSweepMode = &quot;지금의 속도를 유지한다&quot;&gt;&gt;&lt;&lt;run setup.setLighthouseLensSpeed(&quot;current&quot;,&quot;부분의 몸 감각&quot;)&gt;&gt;&lt;&lt;/link&gt;&gt;
 &lt;/div&gt;
-&lt;/div&gt;</tw-passagedata><tw-passagedata pid="19" name="부분의 몸 감각" tags="" position="2140,320" size="180,120">&lt;div class=&quot;room-input-stage&quot;&gt;
+&lt;/div&gt;</tw-passagedata><tw-passagedata pid="24" name="부분의 몸 감각" tags="" position="2140,320" size="180,120">&lt;div class=&quot;room-input-stage&quot;&gt;
 &lt;h1&gt;&lt;&lt;print setup.roomLabel($currentRoom)&gt;&gt;에서 느껴지는 몸의 감각&lt;/h1&gt;
 &lt;p class=&quot;felt-sense-note&quot;&gt;이 움직임을 설명하기 전에, 몸에서 먼저 느껴지는 모양을 살펴봅니다.&lt;/p&gt;
 &lt;h2&gt;이 부분이 움직일 때 몸에서는 무엇이 가장 가까이 느껴지나요?&lt;/h2&gt;
@@ -5733,7 +5801,7 @@ if (!setup.audioInteractionBound) {
 &lt;&lt;button &quot;내 말로 직접 적기&quot;&gt;&gt;&lt;&lt;run setup.openRoomInput($currentRoom,&quot;bodyWords&quot;,&quot;이 부분이 움직일 때 몸에서 느껴지는 감각을 적어주세요.&quot;,{groupVariable:&quot;roomBody&quot;,nextPassage:&quot;부분을 바라보는 마음&quot;})&gt;&gt;&lt;&lt;/button&gt;&gt;
 &lt;/div&gt;
 &lt;/div&gt;
-&lt;div class=&quot;custom-input-host&quot;&gt;&lt;/div&gt;</tw-passagedata><tw-passagedata pid="20" name="부분을 바라보는 마음" tags="" position="2380,320" size="180,120">&lt;h1&gt;이 부분을 바라보면 지금 어떤 마음이 드나요?&lt;/h1&gt;
+&lt;div class=&quot;custom-input-host&quot;&gt;&lt;/div&gt;</tw-passagedata><tw-passagedata pid="25" name="부분을 바라보는 마음" tags="" position="2380,320" size="180,120">&lt;h1&gt;이 부분을 바라보면 지금 어떤 마음이 드나요?&lt;/h1&gt;
 &lt;div class=&quot;choices&quot;&gt;
 &lt;&lt;link &quot;무엇을 하려는지 궁금하다&quot;&gt;&gt;&lt;&lt;set $roomAttitudes[$currentRoom] = &quot;궁금하다&quot;&gt;&gt;&lt;&lt;run setup.afterAttitude()&gt;&gt;&lt;&lt;/link&gt;&gt;
 &lt;&lt;link &quot;조금 다정하거나 안쓰러운 마음이 든다&quot;&gt;&gt;&lt;&lt;set $roomAttitudes[$currentRoom] = &quot;다정하거나 안쓰럽다&quot;&gt;&gt;&lt;&lt;run setup.afterAttitude()&gt;&gt;&lt;&lt;/link&gt;&gt;
@@ -5742,7 +5810,7 @@ if (!setup.audioInteractionBound) {
 &lt;&lt;link &quot;답답하거나 짜증이 난다&quot;&gt;&gt;&lt;&lt;set $roomAttitudes[$currentRoom] = &quot;답답하거나 짜증이 난다&quot;&gt;&gt;&lt;&lt;run setup.afterAttitude()&gt;&gt;&lt;&lt;/link&gt;&gt;
 &lt;&lt;link &quot;빨리 없어졌으면 좋겠다&quot;&gt;&gt;&lt;&lt;set $roomAttitudes[$currentRoom] = &quot;빨리 없어졌으면 좋겠다&quot;&gt;&gt;&lt;&lt;run setup.afterAttitude()&gt;&gt;&lt;&lt;/link&gt;&gt;
 &lt;&lt;link &quot;아직 어떤 마음인지 잘 모르겠다&quot;&gt;&gt;&lt;&lt;set $roomAttitudes[$currentRoom] = &quot;아직 잘 모르겠다&quot;&gt;&gt;&lt;&lt;run setup.afterAttitude()&gt;&gt;&lt;&lt;/link&gt;&gt;
-&lt;/div&gt;</tw-passagedata><tw-passagedata pid="21" name="함께 있는 다른 부분" tags="" position="2600,150" size="180,120">&lt;div class=&quot;room-input-stage&quot;&gt;
+&lt;/div&gt;</tw-passagedata><tw-passagedata pid="26" name="함께 있는 다른 부분" tags="" position="2600,150" size="180,120">&lt;div class=&quot;room-input-stage&quot;&gt;
 &lt;h1&gt;이 움직임을 힘들어하는 마음도 함께 있습니다.&lt;/h1&gt;
 &lt;p&gt;새로운 의미를 정하지 않고, 지금 드러난 반응만 잠시 따로 바라봅니다.&lt;/p&gt;
 &lt;h2&gt;이 부분이 계속 움직이면 무엇이 걱정되나요?&lt;/h2&gt;
@@ -5757,7 +5825,7 @@ if (!setup.audioInteractionBound) {
 &lt;&lt;button &quot;내 말로 직접 적기&quot;&gt;&gt;&lt;&lt;run setup.openRoomInput($currentRoom,&quot;secondWords&quot;,&quot;이 움직임을 힘들어하는 마음이 걱정하는 것을 적어주세요.&quot;,{groupVariable:&quot;roomSecondParts&quot;,nextPassage:&quot;멈추면 걱정되는 일&quot;})&gt;&gt;&lt;&lt;/button&gt;&gt;
 &lt;/div&gt;
 &lt;/div&gt;
-&lt;div class=&quot;custom-input-host&quot;&gt;&lt;/div&gt;</tw-passagedata><tw-passagedata pid="22" name="멈추면 걱정되는 일" tags="" position="2600,320" size="180,120">&lt;div class=&quot;room-input-stage&quot;&gt;
+&lt;div class=&quot;custom-input-host&quot;&gt;&lt;/div&gt;</tw-passagedata><tw-passagedata pid="27" name="멈추면 걱정되는 일" tags="" position="2600,320" size="180,120">&lt;div class=&quot;room-input-stage&quot;&gt;
 &lt;h1&gt;이 부분이 하던 일을 잠시 늦춘다면&lt;/h1&gt;
 &lt;h2&gt;어떤 일이 생길 것 같나요?&lt;/h2&gt;
 &lt;div class=&quot;choices&quot;&gt;
@@ -5772,7 +5840,7 @@ if (!setup.audioInteractionBound) {
 &lt;&lt;button &quot;내 말로 직접 적기&quot;&gt;&gt;&lt;&lt;run setup.openRoomInput($currentRoom,&quot;worryWords&quot;,&quot;이 부분이 하던 일을 늦추면 어떤 일이 생길 것 같나요?&quot;,{groupVariable:&quot;roomWorries&quot;,nextPassage:&quot;지키려는 것&quot;})&gt;&gt;&lt;&lt;/button&gt;&gt;
 &lt;/div&gt;
 &lt;/div&gt;
-&lt;div class=&quot;custom-input-host&quot;&gt;&lt;/div&gt;</tw-passagedata><tw-passagedata pid="23" name="지키려는 것" tags="" position="2820,320" size="180,120">&lt;div class=&quot;room-input-stage&quot;&gt;
+&lt;div class=&quot;custom-input-host&quot;&gt;&lt;/div&gt;</tw-passagedata><tw-passagedata pid="28" name="지키려는 것" tags="" position="2820,320" size="180,120">&lt;div class=&quot;room-input-stage&quot;&gt;
 &lt;h1&gt;이 부분은 무엇을 지키려는 것 같나요?&lt;/h1&gt;
 &lt;div class=&quot;choices&quot;&gt;
 &lt;&lt;link &quot;안전하다는 느낌&quot;&gt;&gt;&lt;&lt;set $roomProtections[$currentRoom] = &quot;안전하다는 느낌&quot;&gt;&gt;&lt;&lt;run setup.rememberRoom($currentRoom,$roomProtections[$currentRoom],&quot;&quot;)&gt;&gt;&lt;&lt;goto &quot;더 살펴볼 허락&quot;&gt;&gt;&lt;&lt;/link&gt;&gt;
@@ -5786,20 +5854,20 @@ if (!setup.audioInteractionBound) {
 &lt;&lt;button &quot;내 말로 직접 적기&quot;&gt;&gt;&lt;&lt;run setup.openRoomInput($currentRoom,&quot;protectionWords&quot;,&quot;이 부분이 지키려는 것을 적어주세요.&quot;,{groupVariable:&quot;roomProtections&quot;,rememberIntent:true,nextPassage:&quot;더 살펴볼 허락&quot;})&gt;&gt;&lt;&lt;/button&gt;&gt;
 &lt;/div&gt;
 &lt;/div&gt;
-&lt;div class=&quot;custom-input-host&quot;&gt;&lt;/div&gt;</tw-passagedata><tw-passagedata pid="24" name="더 살펴볼 허락" tags="" position="3040,320" size="180,120">&lt;h1&gt;이 부분은 지금 그 안쪽을 조금 더 살펴봐도 된다고 느끼나요?&lt;/h1&gt;
+&lt;div class=&quot;custom-input-host&quot;&gt;&lt;/div&gt;</tw-passagedata><tw-passagedata pid="29" name="더 살펴볼 허락" tags="" position="3040,320" size="180,120">&lt;h1&gt;이 부분은 지금 그 안쪽을 조금 더 살펴봐도 된다고 느끼나요?&lt;/h1&gt;
 &lt;div class=&quot;choices&quot;&gt;
 &lt;&lt;link &quot;조금 더 가까이 가도 된다&quot;&gt;&gt;&lt;&lt;set $roomPermissions[$currentRoom] = &quot;조금 더 가까이 가도 된다&quot;&gt;&gt;&lt;&lt;set $permissionMode = &quot;allowed&quot;&gt;&gt;&lt;&lt;run setup.afterPermission()&gt;&gt;&lt;&lt;/link&gt;&gt;
 &lt;&lt;link &quot;멀리서만 보고 싶다&quot;&gt;&gt;&lt;&lt;set $roomPermissions[$currentRoom] = &quot;멀리서만 보고 싶다&quot;&gt;&gt;&lt;&lt;set $permissionMode = &quot;distance&quot;&gt;&gt;&lt;&lt;run setup.afterPermission()&gt;&gt;&lt;&lt;/link&gt;&gt;
 &lt;&lt;link &quot;오늘은 보고 싶지 않다&quot;&gt;&gt;&lt;&lt;set $roomPermissions[$currentRoom] = &quot;오늘은 보고 싶지 않다&quot;&gt;&gt;&lt;&lt;set $permissionMode = &quot;notToday&quot;&gt;&gt;&lt;&lt;run setup.afterPermission()&gt;&gt;&lt;&lt;/link&gt;&gt;
 &lt;&lt;link &quot;아직 모르겠다&quot;&gt;&gt;&lt;&lt;set $roomPermissions[$currentRoom] = &quot;아직 모르겠다&quot;&gt;&gt;&lt;&lt;set $permissionMode = &quot;unknown&quot;&gt;&gt;&lt;&lt;run setup.afterPermission()&gt;&gt;&lt;&lt;/link&gt;&gt;
-&lt;/div&gt;</tw-passagedata><tw-passagedata pid="25" name="필요한 관측 조건" tags="" position="3480,320" size="180,120">&lt;h1&gt;이 부분과 지금 어떤 거리에서 함께 있을 수 있을까요?&lt;/h1&gt;
+&lt;/div&gt;</tw-passagedata><tw-passagedata pid="30" name="필요한 관측 조건" tags="" position="3480,320" size="180,120">&lt;h1&gt;이 부분과 지금 어떤 거리에서 함께 있을 수 있을까요?&lt;/h1&gt;
 &lt;div class=&quot;choices&quot;&gt;
 &lt;&lt;link &quot;가까이에서 움직임을 함께 느낀다&quot;&gt;&gt;&lt;&lt;set $roomConditions[$currentRoom] = &quot;가까이에서 움직임을 함께 느끼기&quot;&gt;&gt;&lt;&lt;set $roomDistances[$currentRoom] = &quot;가까운 거리&quot;&gt;&gt;&lt;&lt;run setup.rememberRoom($currentRoom,$roomProtections[$currentRoom],$roomDistances[$currentRoom])&gt;&gt;&lt;&lt;goto &quot;부분 이름&quot;&gt;&gt;&lt;&lt;/link&gt;&gt;
 &lt;&lt;link &quot;조금 떨어져 전체를 바라본다&quot;&gt;&gt;&lt;&lt;set $roomConditions[$currentRoom] = &quot;조금 떨어져 전체를 바라보기&quot;&gt;&gt;&lt;&lt;set $roomDistances[$currentRoom] = &quot;조금 떨어진 거리&quot;&gt;&gt;&lt;&lt;run setup.rememberRoom($currentRoom,$roomProtections[$currentRoom],$roomDistances[$currentRoom])&gt;&gt;&lt;&lt;goto &quot;부분 이름&quot;&gt;&gt;&lt;&lt;/link&gt;&gt;
 &lt;&lt;link &quot;빛이나 소리를 줄이고 기다린다&quot;&gt;&gt;&lt;&lt;set $roomConditions[$currentRoom] = &quot;빛이나 소리를 줄이고 기다리기&quot;&gt;&gt;&lt;&lt;set $roomDistances[$currentRoom] = &quot;자극을 줄이고 기다리는 거리&quot;&gt;&gt;&lt;&lt;run setup.rememberRoom($currentRoom,$roomProtections[$currentRoom],$roomDistances[$currentRoom])&gt;&gt;&lt;&lt;goto &quot;부분 이름&quot;&gt;&gt;&lt;&lt;/link&gt;&gt;
 &lt;&lt;link &quot;필요할 때 다시 찾아올 수 있게 둔다&quot;&gt;&gt;&lt;&lt;set $roomConditions[$currentRoom] = &quot;필요할 때 다시 찾아올 수 있게 두기&quot;&gt;&gt;&lt;&lt;set $roomDistances[$currentRoom] = &quot;지금은 돌아갈 수 있는 거리&quot;&gt;&gt;&lt;&lt;run setup.rememberRoom($currentRoom,$roomProtections[$currentRoom],$roomDistances[$currentRoom])&gt;&gt;&lt;&lt;goto &quot;부분 이름&quot;&gt;&gt;&lt;&lt;/link&gt;&gt;
 &lt;&lt;link &quot;아직 알맞은 거리를 모르겠다&quot;&gt;&gt;&lt;&lt;set $roomConditions[$currentRoom] = &quot;아직 알맞은 관측 조건을 모름&quot;&gt;&gt;&lt;&lt;set $roomDistances[$currentRoom] = &quot;아직 알 수 없음&quot;&gt;&gt;&lt;&lt;run setup.rememberRoom($currentRoom,$roomProtections[$currentRoom],$roomDistances[$currentRoom])&gt;&gt;&lt;&lt;goto &quot;부분 이름&quot;&gt;&gt;&lt;&lt;/link&gt;&gt;
-&lt;/div&gt;</tw-passagedata><tw-passagedata pid="26" name="부분 이름" tags="" position="3700,320" size="180,120">&lt;div class=&quot;room-input-stage&quot;&gt;
+&lt;/div&gt;</tw-passagedata><tw-passagedata pid="31" name="부분 이름" tags="" position="3700,320" size="180,120">&lt;div class=&quot;room-input-stage&quot;&gt;
 &lt;h1&gt;이 부분을 어떻게 부르고 싶나요?&lt;/h1&gt;
 &lt;p&gt;이름을 붙이지 않아도 괜찮습니다.&lt;/p&gt;
 &lt;div class=&quot;room-input-aux&quot;&gt;
@@ -5807,12 +5875,12 @@ if (!setup.audioInteractionBound) {
 &lt;/div&gt;
 &lt;/div&gt;
 &lt;div class=&quot;custom-input-host&quot;&gt;&lt;/div&gt;
-&lt;&lt;run setTimeout(function(){ setup.openRoomInput(State.variables.currentRoom,&quot;partName&quot;,&quot;이 부분을 어떻게 부르고 싶나요?&quot;,{defaultName:setup.roomDefaultPartName(State.variables.currentRoom),nextPassage:&quot;방의 날씨 조정&quot;}); },0)&gt;&gt;</tw-passagedata><tw-passagedata pid="27" name="방의 날씨 조정" tags="" position="3920,320" size="180,120">&lt;div class=&quot;weather-builder-stage&quot;&gt;
+&lt;&lt;run setTimeout(function(){ setup.openRoomInput(State.variables.currentRoom,&quot;partName&quot;,&quot;이 부분을 어떻게 부르고 싶나요?&quot;,{defaultName:setup.roomDefaultPartName(State.variables.currentRoom),nextPassage:&quot;방의 날씨 조정&quot;}); },0)&gt;&gt;</tw-passagedata><tw-passagedata pid="32" name="방의 날씨 조정" tags="" position="3920,320" size="180,120">&lt;div class=&quot;weather-builder-stage&quot;&gt;
 &lt;h1&gt;이 부분이 지금 나타나는 모습을 조정해보세요.&lt;/h1&gt;
 &lt;p&gt;날씨를 줄이거나 키우는 것이 성공을 뜻하지 않습니다. 이 방에서 느낀 움직임과 닮은 정도로 맞춥니다.&lt;/p&gt;
 &lt;/div&gt;
 &lt;div class=&quot;weather-builder-host&quot;&gt;&lt;/div&gt;
-&lt;&lt;run setTimeout(function(){ setup.openWeatherBuilder(&quot;room&quot;,State.variables.currentRoom); },0)&gt;&gt;</tw-passagedata><tw-passagedata pid="28" name="등대의 걱정" tags="" position="2360,1260" size="150,90">&lt;&lt;goto &quot;멈추면 걱정되는 일&quot;&gt;&gt;</tw-passagedata><tw-passagedata pid="29" name="등대 이름" tags="" position="2540,1260" size="150,90">&lt;&lt;goto &quot;부분 이름&quot;&gt;&gt;</tw-passagedata><tw-passagedata pid="30" name="등대의 반응" tags="" position="2720,1260" size="150,90">&lt;&lt;goto &quot;부분의 몸 감각&quot;&gt;&gt;</tw-passagedata><tw-passagedata pid="31" name="파도 진입" tags="" position="1880,520" size="170,120">&lt;&lt;run setup.enterRoom(&quot;wave&quot;)&gt;&gt;
+&lt;&lt;run setTimeout(function(){ setup.openWeatherBuilder(&quot;room&quot;,State.variables.currentRoom); },0)&gt;&gt;</tw-passagedata><tw-passagedata pid="33" name="등대의 걱정" tags="" position="2360,1260" size="150,90">&lt;&lt;goto &quot;멈추면 걱정되는 일&quot;&gt;&gt;</tw-passagedata><tw-passagedata pid="34" name="등대 이름" tags="" position="2540,1260" size="150,90">&lt;&lt;goto &quot;부분 이름&quot;&gt;&gt;</tw-passagedata><tw-passagedata pid="35" name="등대의 반응" tags="" position="2720,1260" size="150,90">&lt;&lt;goto &quot;부분의 몸 감각&quot;&gt;&gt;</tw-passagedata><tw-passagedata pid="36" name="파도 진입" tags="" position="1880,520" size="170,120">&lt;&lt;run setup.enterRoom(&quot;wave&quot;)&gt;&gt;
 &lt;&lt;set $roomPresence.wave = &quot;느껴짐&quot;&gt;&gt;
 &lt;&lt;set $waveDepth = 0&gt;&gt;
 &lt;&lt;set $roomProtections.wave = &quot;멈추기 어렵게 만드는 힘이 무엇으로부터 나를 지켜왔는지 살펴보는 중&quot;&gt;&gt;
@@ -5842,7 +5910,7 @@ if (!setup.audioInteractionBound) {
 &lt;/div&gt;
 &lt;/div&gt;
 &lt;div class=&quot;custom-input-host&quot;&gt;&lt;/div&gt;
-&lt;&lt;run setTimeout(function(){ setup.syncWaveAbyssState(); },900)&gt;&gt;</tw-passagedata><tw-passagedata pid="32" name="파도 원하는 힘" tags="" position="2110,360" size="190,120">&lt;div class=&quot;wave-surface-return&quot;&gt;[[수면으로 오르기-&gt;관측소 허브]]&lt;/div&gt;
+&lt;&lt;run setTimeout(function(){ setup.syncWaveAbyssState(); },900)&gt;&gt;</tw-passagedata><tw-passagedata pid="37" name="파도 원하는 힘" tags="" position="2110,360" size="190,120">&lt;div class=&quot;wave-surface-return&quot;&gt;[[수면으로 오르기-&gt;관측소 허브]]&lt;/div&gt;
 &lt;div class=&quot;wave-descent wave-descent--continuation&quot;&gt;
 &lt;div class=&quot;wave-empty-water&quot;&gt;&lt;/div&gt;
 &lt;div class=&quot;wave-question-zone room-input-stage&quot;&gt;
@@ -5859,7 +5927,7 @@ if (!setup.audioInteractionBound) {
 &lt;/div&gt;
 &lt;/div&gt;
 &lt;/div&gt;
-&lt;div class=&quot;custom-input-host&quot;&gt;&lt;/div&gt;</tw-passagedata><tw-passagedata pid="33" name="파도 멈춤의 불안" tags="" position="2110,520" size="190,120">&lt;div class=&quot;wave-surface-return&quot;&gt;[[수면으로 오르기-&gt;관측소 허브]]&lt;/div&gt;
+&lt;div class=&quot;custom-input-host&quot;&gt;&lt;/div&gt;</tw-passagedata><tw-passagedata pid="38" name="파도 멈춤의 불안" tags="" position="2110,520" size="190,120">&lt;div class=&quot;wave-surface-return&quot;&gt;[[수면으로 오르기-&gt;관측소 허브]]&lt;/div&gt;
 &lt;div class=&quot;wave-descent wave-descent--continuation&quot;&gt;
 &lt;div class=&quot;wave-empty-water&quot;&gt;&lt;/div&gt;
 &lt;div class=&quot;wave-question-zone room-input-stage&quot;&gt;
@@ -5878,7 +5946,7 @@ if (!setup.audioInteractionBound) {
 &lt;/div&gt;
 &lt;/div&gt;
 &lt;/div&gt;
-&lt;div class=&quot;custom-input-host&quot;&gt;&lt;/div&gt;</tw-passagedata><tw-passagedata pid="34" name="파도 구별하기" tags="" position="2110,680" size="190,120">&lt;div class=&quot;wave-surface-return&quot;&gt;[[수면으로 오르기-&gt;관측소 허브]]&lt;/div&gt;
+&lt;div class=&quot;custom-input-host&quot;&gt;&lt;/div&gt;</tw-passagedata><tw-passagedata pid="39" name="파도 구별하기" tags="" position="2110,680" size="190,120">&lt;div class=&quot;wave-surface-return&quot;&gt;[[수면으로 오르기-&gt;관측소 허브]]&lt;/div&gt;
 &lt;div class=&quot;wave-descent wave-descent--continuation&quot;&gt;
 &lt;div class=&quot;wave-empty-water&quot;&gt;&lt;/div&gt;
 &lt;div class=&quot;wave-question-zone room-input-stage&quot;&gt;
@@ -5896,7 +5964,7 @@ if (!setup.audioInteractionBound) {
 &lt;/div&gt;
 &lt;/div&gt;
 &lt;/div&gt;
-&lt;div class=&quot;custom-input-host&quot;&gt;&lt;/div&gt;</tw-passagedata><tw-passagedata pid="35" name="파도 보호 의도" tags="" position="2380,520" size="190,120">&lt;div class=&quot;wave-surface-return&quot;&gt;[[수면으로 오르기-&gt;관측소 허브]]&lt;/div&gt;
+&lt;div class=&quot;custom-input-host&quot;&gt;&lt;/div&gt;</tw-passagedata><tw-passagedata pid="40" name="파도 보호 의도" tags="" position="2380,520" size="190,120">&lt;div class=&quot;wave-surface-return&quot;&gt;[[수면으로 오르기-&gt;관측소 허브]]&lt;/div&gt;
 &lt;div class=&quot;wave-descent wave-descent--continuation&quot;&gt;
 &lt;div class=&quot;wave-empty-water&quot;&gt;&lt;/div&gt;
 &lt;div class=&quot;wave-question-zone room-input-stage&quot;&gt;
@@ -5918,7 +5986,7 @@ if (!setup.audioInteractionBound) {
 &lt;/div&gt;
 &lt;/div&gt;
 &lt;div class=&quot;custom-input-host&quot;&gt;&lt;/div&gt;
-&lt;&lt;run setTimeout(function(){ setup.syncWaveAbyssState(); },0)&gt;&gt;</tw-passagedata><tw-passagedata pid="36" name="파도 머무는 위치" tags="" position="2640,520" size="190,120">&lt;div class=&quot;wave-surface-return&quot;&gt;[[수면으로 오르기-&gt;관측소 허브]]&lt;/div&gt;
+&lt;&lt;run setTimeout(function(){ setup.syncWaveAbyssState(); },0)&gt;&gt;</tw-passagedata><tw-passagedata pid="41" name="파도 머무는 위치" tags="" position="2640,520" size="190,120">&lt;div class=&quot;wave-surface-return&quot;&gt;[[수면으로 오르기-&gt;관측소 허브]]&lt;/div&gt;
 &lt;div class=&quot;wave-descent wave-descent--continuation&quot;&gt;
 &lt;div class=&quot;wave-empty-water&quot;&gt;&lt;/div&gt;
 &lt;div class=&quot;wave-question-zone&quot;&gt;
@@ -5932,7 +6000,7 @@ if (!setup.audioInteractionBound) {
 &lt;&lt;link &quot;관측소로 돌아간다&quot;&gt;&gt;&lt;&lt;run setup.finishWaveRoom(&quot;관측소로 돌아갈 수 있는 거리&quot;)&gt;&gt;&lt;&lt;/link&gt;&gt;
 &lt;/div&gt;
 &lt;/div&gt;
-&lt;/div&gt;</tw-passagedata><tw-passagedata pid="37" name="파도 심연" tags="" position="2900,520" size="190,120">&lt;&lt;run setup.syncWaveAbyssState()&gt;&gt;
+&lt;/div&gt;</tw-passagedata><tw-passagedata pid="42" name="파도 심연" tags="" position="2900,520" size="190,120">&lt;&lt;run setup.syncWaveAbyssState()&gt;&gt;
 &lt;div class=&quot;wave-surface-return&quot;&gt;[[수면으로 오르기-&gt;관측소 허브]]&lt;/div&gt;
 &lt;div class=&quot;wave-descent wave-descent--continuation&quot;&gt;
 &lt;div class=&quot;wave-empty-water&quot;&gt;&lt;/div&gt;
@@ -5953,7 +6021,7 @@ if (!setup.audioInteractionBound) {
 &lt;/div&gt;
 &lt;/div&gt;
 &lt;/div&gt;
-&lt;div class=&quot;custom-input-host&quot;&gt;&lt;/div&gt;</tw-passagedata><tw-passagedata pid="38" name="파도 심연 조절" tags="" position="3160,520" size="190,120">&lt;div class=&quot;wave-surface-return&quot;&gt;[[수면으로 오르기-&gt;관측소 허브]]&lt;/div&gt;
+&lt;div class=&quot;custom-input-host&quot;&gt;&lt;/div&gt;</tw-passagedata><tw-passagedata pid="43" name="파도 심연 조절" tags="" position="3160,520" size="190,120">&lt;div class=&quot;wave-surface-return&quot;&gt;[[수면으로 오르기-&gt;관측소 허브]]&lt;/div&gt;
 &lt;div class=&quot;wave-descent wave-descent--continuation&quot;&gt;
 &lt;div class=&quot;wave-empty-water&quot;&gt;&lt;/div&gt;
 &lt;div class=&quot;wave-question-zone wave-abyss-zone&quot;&gt;
@@ -5970,7 +6038,7 @@ if (!setup.audioInteractionBound) {
 &lt;&lt;link &quot;관측소로 돌아간다&quot;&gt;&gt;&lt;&lt;run setup.finishWaveRoom(&quot;심연 &quot; + $waveDepth + &quot;단계에서도 관측소로 돌아갈 수 있는 거리&quot;)&gt;&gt;&lt;&lt;/link&gt;&gt;
 &lt;/div&gt;
 &lt;/div&gt;
-&lt;/div&gt;</tw-passagedata><tw-passagedata pid="39" name="파도가 막고 있는 것" tags="" position="2900,1380" size="190,120">&lt;&lt;goto &quot;파도 보호 의도&quot;&gt;&gt;</tw-passagedata><tw-passagedata pid="40" name="파도의 허락" tags="" position="3120,1380" size="190,120">&lt;&lt;goto &quot;파도 머무는 위치&quot;&gt;&gt;</tw-passagedata><tw-passagedata pid="41" name="파도 깊이" tags="" position="3340,1380" size="190,120">&lt;&lt;goto &quot;파도 머무는 위치&quot;&gt;&gt;</tw-passagedata><tw-passagedata pid="42" name="파도 실루엣" tags="" position="3560,1380" size="190,120">&lt;&lt;goto &quot;파도 심연&quot;&gt;&gt;</tw-passagedata><tw-passagedata pid="43" name="파도 거리" tags="" position="3780,1380" size="190,120">&lt;&lt;goto &quot;파도 심연 조절&quot;&gt;&gt;</tw-passagedata><tw-passagedata pid="44" name="파도 수면" tags="" position="4000,1380" size="190,120">&lt;&lt;goto &quot;파도 머무는 위치&quot;&gt;&gt;</tw-passagedata><tw-passagedata pid="45" name="파도의 의도" tags="" position="4220,1380" size="150,90">&lt;&lt;goto &quot;파도 보호 의도&quot;&gt;&gt;</tw-passagedata><tw-passagedata pid="46" name="파도 반응" tags="" position="4440,1380" size="150,90">&lt;&lt;goto &quot;파도 멈춤의 불안&quot;&gt;&gt;</tw-passagedata><tw-passagedata pid="47" name="파도 이름" tags="" position="2660,520" size="170,120">&lt;&lt;run setup.rememberRoom(&quot;wave&quot;,$roomProtections.wave,$waveDistance)&gt;&gt;
+&lt;/div&gt;</tw-passagedata><tw-passagedata pid="44" name="파도가 막고 있는 것" tags="" position="2900,1380" size="190,120">&lt;&lt;goto &quot;파도 보호 의도&quot;&gt;&gt;</tw-passagedata><tw-passagedata pid="45" name="파도의 허락" tags="" position="3120,1380" size="190,120">&lt;&lt;goto &quot;파도 머무는 위치&quot;&gt;&gt;</tw-passagedata><tw-passagedata pid="46" name="파도 깊이" tags="" position="3340,1380" size="190,120">&lt;&lt;goto &quot;파도 머무는 위치&quot;&gt;&gt;</tw-passagedata><tw-passagedata pid="47" name="파도 실루엣" tags="" position="3560,1380" size="190,120">&lt;&lt;goto &quot;파도 심연&quot;&gt;&gt;</tw-passagedata><tw-passagedata pid="48" name="파도 거리" tags="" position="3780,1380" size="190,120">&lt;&lt;goto &quot;파도 심연 조절&quot;&gt;&gt;</tw-passagedata><tw-passagedata pid="49" name="파도 수면" tags="" position="4000,1380" size="190,120">&lt;&lt;goto &quot;파도 머무는 위치&quot;&gt;&gt;</tw-passagedata><tw-passagedata pid="50" name="파도의 의도" tags="" position="4220,1380" size="150,90">&lt;&lt;goto &quot;파도 보호 의도&quot;&gt;&gt;</tw-passagedata><tw-passagedata pid="51" name="파도 반응" tags="" position="4440,1380" size="150,90">&lt;&lt;goto &quot;파도 멈춤의 불안&quot;&gt;&gt;</tw-passagedata><tw-passagedata pid="52" name="파도 이름" tags="" position="2660,520" size="170,120">&lt;&lt;run setup.rememberRoom(&quot;wave&quot;,$roomProtections.wave,$waveDistance)&gt;&gt;
 &lt;div class=&quot;wave-surface-return&quot;&gt;[[수면으로 오르기-&gt;관측소 허브]]&lt;/div&gt;
 &lt;div class=&quot;wave-descent wave-descent--continuation&quot;&gt;
 &lt;div class=&quot;wave-empty-water&quot;&gt;&lt;/div&gt;
@@ -6000,7 +6068,7 @@ if (!setup.audioInteractionBound) {
 &lt;&lt;run setTimeout(function(){
 	setup.bindWaveScroll(0.36,0.52);
 	setup.renderWaveNameSuggestions();
-},0)&gt;&gt;</tw-passagedata><tw-passagedata pid="48" name="안개 진입" tags="" position="1880,940" size="170,120">&lt;&lt;run setup.enterRoom(&quot;fog&quot;)&gt;&gt;
+},0)&gt;&gt;</tw-passagedata><tw-passagedata pid="53" name="안개 진입" tags="" position="1880,940" size="170,120">&lt;&lt;run setup.enterRoom(&quot;fog&quot;)&gt;&gt;
 &lt;div class=&quot;room-input-stage&quot;&gt;
 &lt;div class=&quot;room-ui fog-room-entry&quot;&gt;
 &lt;&lt;if $roomState.fog.visits &gt; 1 and setup.fogDisplayName() isnot &quot;아직 이름 붙지 않은 부분&quot;&gt;&gt;
@@ -6027,7 +6095,7 @@ if (!setup.audioInteractionBound) {
 &lt;/div&gt;
 &lt;/div&gt;
 &lt;/div&gt;
-&lt;div class=&quot;custom-input-host&quot;&gt;&lt;/div&gt;</tw-passagedata><tw-passagedata pid="49" name="안개가 마련한 것" tags="" position="2140,940" size="190,120">&lt;div class=&quot;room-input-stage&quot;&gt;
+&lt;div class=&quot;custom-input-host&quot;&gt;&lt;/div&gt;</tw-passagedata><tw-passagedata pid="54" name="안개가 마련한 것" tags="" position="2140,940" size="190,120">&lt;div class=&quot;room-input-stage&quot;&gt;
 &lt;h1&gt;그렇게 멀어져 있는 동안, 이 부분은 나에게 무엇을 마련해주려는 것 같나요?&lt;/h1&gt;
 &lt;div class=&quot;choices&quot;&gt;
 [[아무도 건드리지 않는 거리-&gt;안개가 정한 거리][$fogReliefNeed = &quot;아무도 건드리지 않는 거리&quot;; $roomProtections.fog = $fogReliefNeed]]
@@ -6041,7 +6109,7 @@ if (!setup.audioInteractionBound) {
 &lt;&lt;button &quot;내 말로 직접 적기&quot;&gt;&gt;&lt;&lt;run setup.openRoomInput(&quot;fog&quot;,&quot;reliefWords&quot;,&quot;멀어져 있는 동안 이 부분이 마련해주려는 거리나 시간을 적어주세요.&quot;,{stateVariable:&quot;fogReliefNeed&quot;,groupVariable:&quot;roomProtections&quot;,appendOwnWords:true,rememberIntent:true,nextPassage:&quot;안개가 정한 거리&quot;})&gt;&gt;&lt;&lt;/button&gt;&gt;
 &lt;/div&gt;
 &lt;/div&gt;
-&lt;div class=&quot;custom-input-host&quot;&gt;&lt;/div&gt;</tw-passagedata><tw-passagedata pid="50" name="안개가 정한 거리" tags="" position="2400,940" size="190,120">&lt;h1&gt;지금 이 부분은 어디에서 쉬고 싶어 하나요?&lt;/h1&gt;
+&lt;div class=&quot;custom-input-host&quot;&gt;&lt;/div&gt;</tw-passagedata><tw-passagedata pid="55" name="안개가 정한 거리" tags="" position="2400,940" size="190,120">&lt;h1&gt;지금 이 부분은 어디에서 쉬고 싶어 하나요?&lt;/h1&gt;
 &lt;div class=&quot;choices&quot;&gt;
 &lt;&lt;button &quot;선실 안에서 문을 닫고 머물고 싶다&quot;&gt;&gt;
 	&lt;&lt;set $fogDistance = &quot;선실 문 안쪽&quot;&gt;&gt;
@@ -6078,7 +6146,7 @@ if (!setup.audioInteractionBound) {
 	&lt;&lt;run setup.rememberRoom(&quot;fog&quot;,$fogReliefNeed,$fogDistance)&gt;&gt;
 	&lt;&lt;run setup.playFogBoatMotion(&quot;stay&quot;,&quot;안개 이름 역할&quot;)&gt;&gt;
 &lt;&lt;/button&gt;&gt;
-&lt;/div&gt;</tw-passagedata><tw-passagedata pid="51" name="안개 이름 역할" tags="" position="2660,940" size="190,120">&lt;h1&gt;이 부분이 하는 일과 가장 가까운 말은 무엇인가요?&lt;/h1&gt;
+&lt;/div&gt;</tw-passagedata><tw-passagedata pid="56" name="안개 이름 역할" tags="" position="2660,940" size="190,120">&lt;h1&gt;이 부분이 하는 일과 가장 가까운 말은 무엇인가요?&lt;/h1&gt;
 &lt;div class=&quot;choices&quot;&gt;
 [[잠시 숨게 해주는-&gt;안개 이름 이미지][$fogNameRole = &quot;잠시 숨게 해주는&quot;]]
 [[멀리 떨어지게 하는-&gt;안개 이름 이미지][$fogNameRole = &quot;멀리 떨어지게 하는&quot;]]
@@ -6086,7 +6154,7 @@ if (!setup.audioInteractionBound) {
 [[아무것도 하지 않아도 되게 하는-&gt;안개 이름 이미지][$fogNameRole = &quot;아무것도 하지 않아도 되게 하는&quot;]]
 [[숨 돌릴 시간을 벌어주는-&gt;안개 이름 이미지][$fogNameRole = &quot;숨 돌릴 시간을 벌어주는&quot;]]
 [[아직 잘 모르겠다-&gt;안개 이름 이미지][$fogNameRole = &quot;아직 잘 모르겠다&quot;]]
-&lt;/div&gt;</tw-passagedata><tw-passagedata pid="52" name="안개 이름 이미지" tags="" position="2880,940" size="190,120">&lt;div class=&quot;room-input-stage&quot;&gt;
+&lt;/div&gt;</tw-passagedata><tw-passagedata pid="57" name="안개 이름 이미지" tags="" position="2880,940" size="190,120">&lt;div class=&quot;room-input-stage&quot;&gt;
 &lt;h1&gt;이 부분은 어떤 모습과 가장 닮았나요?&lt;/h1&gt;
 &lt;div class=&quot;choices&quot;&gt;
 [[안개-&gt;안개 이름 제안][$fogNameImage = &quot;안개&quot;]]
@@ -6100,7 +6168,7 @@ if (!setup.audioInteractionBound) {
 &lt;&lt;button &quot;내 말로 적기&quot;&gt;&gt;&lt;&lt;run setup.openRoomInput(&quot;fog&quot;,&quot;imageWords&quot;,&quot;이 부분과 닮은 모습을 적어주세요.&quot;,{stateVariable:&quot;fogNameImage&quot;,storeAsOwnWords:false,nextPassage:&quot;안개 이름 제안&quot;})&gt;&gt;&lt;&lt;/button&gt;&gt;
 &lt;/div&gt;
 &lt;/div&gt;
-&lt;div class=&quot;custom-input-host&quot;&gt;&lt;/div&gt;</tw-passagedata><tw-passagedata pid="53" name="안개 이름 제안" tags="" position="3100,940" size="190,120">&lt;div class=&quot;room-input-stage&quot;&gt;
+&lt;div class=&quot;custom-input-host&quot;&gt;&lt;/div&gt;</tw-passagedata><tw-passagedata pid="58" name="안개 이름 제안" tags="" position="3100,940" size="190,120">&lt;div class=&quot;room-input-stage&quot;&gt;
 &lt;h1&gt;이 부분을 부를 이름을 골라볼 수 있습니다.&lt;/h1&gt;
 &lt;p class=&quot;fog-name-guide&quot;&gt;이름은 사람 이름처럼 지을 필요가 없습니다.&lt;br&gt;
 이 부분이 하는 일이나 떠오르는 장면을 그대로 사용해도 됩니다.&lt;/p&gt;
@@ -6108,7 +6176,7 @@ if (!setup.audioInteractionBound) {
 &lt;div class=&quot;fog-name-secondary-actions&quot;&gt;&lt;/div&gt;
 &lt;/div&gt;
 &lt;div class=&quot;custom-input-host&quot;&gt;&lt;/div&gt;
-&lt;&lt;run setTimeout(setup.renderFogNameSuggestions,0)&gt;&gt;</tw-passagedata><tw-passagedata pid="54" name="안개 이름 확인" tags="" position="3320,940" size="190,120">&lt;&lt;if setup.fogDisplayName() is &quot;아직 이름 붙지 않은 부분&quot;&gt;&gt;
+&lt;&lt;run setTimeout(setup.renderFogNameSuggestions,0)&gt;&gt;</tw-passagedata><tw-passagedata pid="59" name="안개 이름 확인" tags="" position="3320,940" size="190,120">&lt;&lt;if setup.fogDisplayName() is &quot;아직 이름 붙지 않은 부분&quot;&gt;&gt;
 &lt;h1&gt;이번에는 이름을 붙이지 않고 남겨둡니다.&lt;/h1&gt;
 &lt;p&gt;다음 관측에서 언제든 이름을 만들거나 바꿀 수 있습니다.&lt;/p&gt;
 &lt;&lt;else&gt;&gt;
@@ -6124,7 +6192,7 @@ if (!setup.audioInteractionBound) {
 	&lt;&lt;/if&gt;&gt;
 	&lt;&lt;goto &quot;관측소 허브&quot;&gt;&gt;
 &lt;&lt;/button&gt;&gt;
-&lt;/div&gt;</tw-passagedata><tw-passagedata pid="55" name="이름 바꾸기" tags="" position="3540,940" size="170,100">&lt;div class=&quot;room-input-stage&quot;&gt;
+&lt;/div&gt;</tw-passagedata><tw-passagedata pid="60" name="이름 바꾸기" tags="" position="3540,940" size="170,100">&lt;div class=&quot;room-input-stage&quot;&gt;
 &lt;h1&gt;&lt;&lt;print setup.roomPartName($renameRoom)&gt;&gt;의 이름을 바꿉니다.&lt;/h1&gt;
 &lt;/div&gt;
 &lt;div class=&quot;custom-input-host&quot;&gt;&lt;/div&gt;
@@ -6134,14 +6202,14 @@ if (!setup.audioInteractionBound) {
 		defaultName:setup.roomDefaultPartName(room),
 		nextPassage:&quot;이름 변경 확인&quot;
 	});
-},0)&gt;&gt;</tw-passagedata><tw-passagedata pid="56" name="이름 변경 확인" tags="" position="3760,940" size="170,100">&lt;h1&gt;이제 이 부분을 ‘&lt;&lt;print setup.escapeText(setup.roomPartName($renameRoom))&gt;&gt;’&lt;&lt;print setup.koreanParticle(setup.roomPartName($renameRoom),&quot;이라고&quot;,&quot;라고&quot;)&gt;&gt; 불러두겠습니다.&lt;/h1&gt;
+},0)&gt;&gt;</tw-passagedata><tw-passagedata pid="61" name="이름 변경 확인" tags="" position="3760,940" size="170,100">&lt;h1&gt;이제 이 부분을 ‘&lt;&lt;print setup.escapeText(setup.roomPartName($renameRoom))&gt;&gt;’&lt;&lt;print setup.koreanParticle(setup.roomPartName($renameRoom),&quot;이라고&quot;,&quot;라고&quot;)&gt;&gt; 불러두겠습니다.&lt;/h1&gt;
 &lt;p&gt;이전의 탐색 응답과 방문 기록은 그대로 유지됩니다.&lt;/p&gt;
 &lt;div class=&quot;choices&quot;&gt;
 &lt;&lt;button &quot;관측소로 돌아간다&quot;&gt;&gt;
 	&lt;&lt;set $renameRoom = &quot;&quot;&gt;&gt;&lt;&lt;set $currentRoom = &quot;hub&quot;&gt;&gt;&lt;&lt;set $sceneMode = &quot;hub&quot;&gt;&gt;
 	&lt;&lt;goto &quot;관측소 허브&quot;&gt;&gt;
 &lt;&lt;/button&gt;&gt;
-&lt;/div&gt;</tw-passagedata><tw-passagedata pid="57" name="안개 반응" tags="" position="3440,1260" size="150,90">&lt;&lt;goto &quot;안개가 마련한 것&quot;&gt;&gt;</tw-passagedata><tw-passagedata pid="58" name="안개의 이유" tags="" position="3620,1260" size="150,90">&lt;&lt;goto &quot;안개가 마련한 것&quot;&gt;&gt;</tw-passagedata><tw-passagedata pid="59" name="안개 이름" tags="" position="3800,1260" size="150,90">&lt;&lt;goto &quot;안개 이름 역할&quot;&gt;&gt;</tw-passagedata><tw-passagedata pid="60" name="안개 속 기다림" tags="" position="3980,1260" size="150,90">&lt;&lt;goto &quot;안개가 정한 거리&quot;&gt;&gt;</tw-passagedata><tw-passagedata pid="61" name="가까웠던 부분" tags="" position="1640,720" size="180,120">&lt;&lt;if not setup.areAllRoomsCompleted()&gt;&gt;&lt;&lt;goto &quot;관측소 허브&quot;&gt;&gt;&lt;&lt;else&gt;&gt;
+&lt;/div&gt;</tw-passagedata><tw-passagedata pid="62" name="안개 반응" tags="" position="3440,1260" size="150,90">&lt;&lt;goto &quot;안개가 마련한 것&quot;&gt;&gt;</tw-passagedata><tw-passagedata pid="63" name="안개의 이유" tags="" position="3620,1260" size="150,90">&lt;&lt;goto &quot;안개가 마련한 것&quot;&gt;&gt;</tw-passagedata><tw-passagedata pid="64" name="안개 이름" tags="" position="3800,1260" size="150,90">&lt;&lt;goto &quot;안개 이름 역할&quot;&gt;&gt;</tw-passagedata><tw-passagedata pid="65" name="안개 속 기다림" tags="" position="3980,1260" size="150,90">&lt;&lt;goto &quot;안개가 정한 거리&quot;&gt;&gt;</tw-passagedata><tw-passagedata pid="66" name="가까웠던 부분" tags="" position="1640,720" size="180,120">&lt;&lt;if not setup.areAllRoomsCompleted()&gt;&gt;&lt;&lt;goto &quot;관측소 허브&quot;&gt;&gt;&lt;&lt;else&gt;&gt;
 &lt;h1&gt;세 공간 중 오늘 가장 가까이 느껴졌던 부분은 무엇인가요?&lt;/h1&gt;
 &lt;div class=&quot;choices&quot;&gt;
 [[계속 살피는 등대의 부분-&gt;관찰 위치][$primaryRoomChoice = &quot;lighthouse&quot;]]
@@ -6149,14 +6217,14 @@ if (!setup.audioInteractionBound) {
 [[거리를 만드는 안개의 부분-&gt;관찰 위치][$primaryRoomChoice = &quot;fog&quot;]]
 [[어느 하나를 고르기 어렵다-&gt;관찰 위치][$primaryRoomChoice = &quot;&quot;]]
 &lt;/div&gt;
-&lt;&lt;/if&gt;&gt;</tw-passagedata><tw-passagedata pid="62" name="관찰 위치" tags="" position="1880,720" size="180,120">&lt;h1&gt;그 부분과 지금 어느 위치에서 함께 있을 수 있을까요?&lt;/h1&gt;
+&lt;&lt;/if&gt;&gt;</tw-passagedata><tw-passagedata pid="67" name="관찰 위치" tags="" position="1880,720" size="180,120">&lt;h1&gt;그 부분과 지금 어느 위치에서 함께 있을 수 있을까요?&lt;/h1&gt;
 &lt;div class=&quot;choices&quot;&gt;
 [[가까이에서 움직임을 함께 느낀다-&gt;작은 행동][$finalPosition = &quot;가까이에서 움직임을 함께 느끼는 위치&quot;]]
 [[조금 떨어져 전체를 바라본다-&gt;작은 행동][$finalPosition = &quot;조금 떨어져 전체를 바라보는 위치&quot;]]
 [[빛이나 소리를 줄이고 곁에 머문다-&gt;작은 행동][$finalPosition = &quot;자극을 줄이고 곁에 머무는 위치&quot;]]
 [[필요할 때 다시 찾아올 수 있는 거리를 둔다-&gt;작은 행동][$finalPosition = &quot;필요할 때 다시 찾아올 수 있는 거리&quot;]]
 [[아직 알맞은 위치를 모르겠다-&gt;작은 행동][$finalPosition = &quot;아직 알 수 없음&quot;]]
-&lt;/div&gt;</tw-passagedata><tw-passagedata pid="63" name="작은 행동" tags="" position="2120,720" size="180,120">&lt;div class=&quot;room-input-stage&quot;&gt;
+&lt;/div&gt;</tw-passagedata><tw-passagedata pid="68" name="작은 행동" tags="" position="2120,720" size="180,120">&lt;div class=&quot;room-input-stage&quot;&gt;
 &lt;h1&gt;이 날씨와 함께 지내기 위해 지금 선택할 수 있는 작은 행동이 있나요?&lt;/h1&gt;
 &lt;div class=&quot;choices&quot;&gt;
 [[잠깐 멈추고 몸의 감각을 확인한다-&gt;마지막 날씨 조정][$smallAction = &quot;잠깐 멈추고 몸의 감각 확인하기&quot;]]
@@ -6169,12 +6237,12 @@ if (!setup.audioInteractionBound) {
 &lt;&lt;button &quot;내 말로 직접 적기&quot;&gt;&gt;&lt;&lt;run setup.openReflectionInput(&quot;smallAction&quot;,&quot;지금 선택할 수 있는 작은 행동을 적어주세요.&quot;,&quot;마지막 날씨 조정&quot;)&gt;&gt;&lt;&lt;/button&gt;&gt;
 &lt;/div&gt;
 &lt;/div&gt;
-&lt;div class=&quot;custom-input-host&quot;&gt;&lt;/div&gt;</tw-passagedata><tw-passagedata pid="64" name="마지막 날씨 조정" tags="" position="2360,720" size="180,120">&lt;div class=&quot;weather-builder-stage&quot;&gt;
+&lt;div class=&quot;custom-input-host&quot;&gt;&lt;/div&gt;</tw-passagedata><tw-passagedata pid="69" name="마지막 날씨 조정" tags="" position="2360,720" size="180,120">&lt;div class=&quot;weather-builder-stage&quot;&gt;
 &lt;h1&gt;지금 이 날씨와 함께 있을 수 있는 위치를 정해보세요.&lt;/h1&gt;
 &lt;p&gt;날씨가 사라질 필요는 없습니다. 오늘 알게 된 내용을 반영해 지금 보이는 날씨의 정도를 다시 맞춰봅니다.&lt;/p&gt;
 &lt;/div&gt;
 &lt;div class=&quot;weather-builder-host&quot;&gt;&lt;/div&gt;
-&lt;&lt;run setTimeout(function(){ setup.openWeatherBuilder(&quot;final&quot;); },0)&gt;&gt;</tw-passagedata><tw-passagedata pid="65" name="날씨 기록" tags="" position="2600,720" size="180,120">&lt;&lt;if not setup.areAllRoomsCompleted()&gt;&gt;
+&lt;&lt;run setTimeout(function(){ setup.openWeatherBuilder(&quot;final&quot;); },0)&gt;&gt;</tw-passagedata><tw-passagedata pid="70" name="날씨 기록" tags="" position="2600,720" size="180,120">&lt;&lt;if not setup.areAllRoomsCompleted()&gt;&gt;
 &lt;&lt;goto &quot;관측소 허브&quot;&gt;&gt;
 &lt;&lt;else&gt;&gt;
 &lt;&lt;set $sceneMode = &quot;hub&quot;&gt;&gt;&lt;&lt;set $currentRoom = &quot;hub&quot;&gt;&gt;
@@ -6186,14 +6254,14 @@ if (!setup.audioInteractionBound) {
 &lt;/header&gt;
 &lt;div id=&quot;observationReportHost&quot; class=&quot;observation-report-host&quot;&gt;&lt;/div&gt;
 &lt;&lt;run setTimeout(setup.renderObservationReport,0)&gt;&gt;
-&lt;&lt;/if&gt;&gt;</tw-passagedata><tw-passagedata pid="66" name="비상 복귀" tags="" position="1640,1060" size="160,100">&lt;span class=&quot;code&quot;&gt;잠시 멈춤&lt;/span&gt;
+&lt;&lt;/if&gt;&gt;</tw-passagedata><tw-passagedata pid="71" name="비상 복귀" tags="" position="1640,1060" size="160,100">&lt;span class=&quot;code&quot;&gt;잠시 멈춤&lt;/span&gt;
 &lt;h1&gt;외부 관측으로 전환&lt;/h1&gt;
 
 내면 관측을 중지합니다. 화면 밖에서 보이는 사물 세 가지를 찾고, 발이나 등을 받치는 표면을 느낍니다. 현재 날짜와 실제 위치를 확인합니다.
 
 &lt;div class=&quot;transmission&quot;&gt;지금 해석하거나 해결하지 않아도 됩니다. 관측을 중단하는 것도 관측자의 중요한 권한입니다.&lt;/div&gt;
 
-&lt;div class=&quot;choices&quot;&gt;[[관측소를 나간다-&gt;관측 종료]]&lt;/div&gt;</tw-passagedata><tw-passagedata pid="67" name="관측 종료" tags="" position="2820,720" size="160,100">&lt;div class=&quot;ending&quot;&gt;
+&lt;div class=&quot;choices&quot;&gt;[[관측소를 나간다-&gt;관측 종료]]&lt;/div&gt;</tw-passagedata><tw-passagedata pid="72" name="관측 종료" tags="" position="2820,720" size="160,100">&lt;div class=&quot;ending&quot;&gt;
 &lt;span class=&quot;code&quot;&gt;관측 종료&lt;/span&gt;
 &lt;h1&gt;관측 종료&lt;/h1&gt;
 

@@ -2940,6 +2940,7 @@ setup.bindDiscoveryInput = function (kind) {
 		error.textContent = "";
 		if (isState) {
 			variables.customState = text;
+			variables.focusPart = text;
 			variables.stateSelection = { id:"custom", label:text };
 			variables.movementSelection = variables.stateSelection;
 			variables.movementMode = "custom";
@@ -2949,7 +2950,7 @@ setup.bindDiscoveryInput = function (kind) {
 			variables.stateBehaviorSelection = { id:"custom", label:text };
 		}
 		setup.setInputFocus(false);
-		Engine.play(isState ? "상태에서의 행동" : "마음의 시야");
+		Engine.play(isState ? "거리두어 보기" : "마음의 시야");
 	});
 	textarea.addEventListener("input", function () {
 		if (textarea.value.trim()) error.textContent = "";
@@ -5153,6 +5154,8 @@ $(document).on(":passagedisplay", function () {
 	var stageMap = {
 		"ABOUT":"About",
 		"첫 진입":"관측 전","들어다보기":"현재 상태","상태 직접 적기":"현재 상태",
+		"거리두어 보기":"거리두기","걱정과 보호":"걱정과 보호","필요와 다음 행동":"지금 필요한 것",
+		"간단 관측 요약":"관측 기록","간단 관측 종료":"관측 기록",
 		"상태에서의 행동":"현재 반응","행동 직접 적기":"현재 반응",
 		"멈추기 어려운 감각":"현재 반응","마음의 시야":"현재 상태",
 		"날씨 만들기":"날씨 만들기","몸의 자리":"몸의 감각","감각의 질감":"몸의 감각","떠오르는 장면":"몸의 감각",
@@ -5181,7 +5184,8 @@ $(document).on(":passagedisplay", function () {
 	$("#distance-data").text(State.variables.distancePhrase || "—");
 	var discoveryPassages = [
 		"첫 진입","들어다보기","상태 직접 적기","상태에서의 행동","행동 직접 적기",
-		"멈추기 어려운 감각","마음의 시야","날씨 만들기","몸의 자리","감각의 질감","떠오르는 장면"
+		"멈추기 어려운 감각","마음의 시야","날씨 만들기","몸의 자리","감각의 질감","떠오르는 장면",
+		"거리두어 보기","걱정과 보호","필요와 다음 행동","간단 관측 요약","간단 관측 종료"
 	];
 	var isDiscovery = discoveryPassages.indexOf(passage()) !== -1;
 	var isFirstEntry = passage() === "첫 진입";
@@ -5421,6 +5425,8 @@ if (!setup.audioInteractionBound) {
 <<set $roomPermissions = { lighthouse:"", wave:"", fog:"" }>>
 <<set $roomConditions = { lighthouse:"", wave:"", fog:"" }>>
 <<set $primaryRoomChoice = "">><<set $finalPosition = "">><<set $smallAction = "">>
+<<set $focusPart = "">><<set $focusDistance = "">>
+<<set $focusConcern = "">><<set $focusProtection = "">><<set $focusNext = "">>
 <<set $selfLight = 0.2>>
 <<set $returnPassage = "들어다보기">>
 <<set $sceneMode = "hub">><<set $currentRoom = "hub">>
@@ -5500,17 +5506,99 @@ if (!setup.audioInteractionBound) {
 <<set $customBehavior = "">>
 <<set $movementPressureReason = "">><<set $movementPressureCustom = "">>
 <div class="intro-ui">
-<h1>지금의 나와 가장 가까운 상태는 무엇인가요?</h1>
-<p>여러 상태가 겹친다면, 지금 가장 크게 느껴지는 것을 골라주세요.</p>
+<p class="observation-step">1 / 5 · 가장 눈에 띄는 부분</p>
+<h1>지금 내 안에서 가장 눈에 띄는 감정이나 반응은 무엇인가요?</h1>
+<p>여러 가지가 겹친다면 하나만 골라도 충분합니다.</p>
 <div class="choices story-choices">
-[[생각과 감정이 한꺼번에 밀려와 벅차다->상태에서의 행동][$movementMode = "overwhelmed"; $stateSelection = {id:"overwhelmed",label:"생각과 감정이 한꺼번에 밀려와 벅차다"}; $movementSelection = $stateSelection; $weatherMode = "wave"]]
-[[불안하고 긴장되어 마음을 놓기 어렵다->상태에서의 행동][$movementMode = "anxious"; $stateSelection = {id:"anxious",label:"불안하고 긴장되어 마음을 놓기 어렵다"}; $movementSelection = $stateSelection; $weatherMode = "watch"]]
-[[기운이 없고 무겁게 가라앉아 있다->상태에서의 행동][$movementMode = "heavy"; $stateSelection = {id:"heavy",label:"기운이 없고 무겁게 가라앉아 있다"}; $movementSelection = $stateSelection; $weatherMode = "cloud"]]
-[[기대되거나 들떠 에너지가 높다->상태에서의 행동][$movementMode = "energized"; $stateSelection = {id:"energized",label:"기대되거나 들떠 에너지가 높다"}; $movementSelection = $stateSelection; $weatherMode = "bright"]]
-[[무엇을 느끼는지 잘 모르겠다->상태에서의 행동][$movementMode = "unclear"; $stateSelection = {id:"unclear",label:"무엇을 느끼는지 잘 모르겠다"}; $movementSelection = $stateSelection; $weatherMode = "fog"]]
-[[지금은 비교적 편안하고 안정되어 있다->상태에서의 행동][$movementMode = "calm"; $stateSelection = {id:"calm",label:"지금은 비교적 편안하고 안정되어 있다"}; $movementSelection = $stateSelection; $weatherMode = "calm"]]
+[[생각과 감정이 한꺼번에 밀려오는 부분->거리두어 보기][$movementMode = "overwhelmed"; $focusPart = "생각과 감정이 한꺼번에 밀려오는 부분"; $stateSelection = {id:"overwhelmed",label:$focusPart}; $movementSelection = $stateSelection; $weatherMode = "wave"]]
+[[계속 살피고 대비하는 부분->거리두어 보기][$movementMode = "anxious"; $focusPart = "계속 살피고 대비하는 부분"; $stateSelection = {id:"anxious",label:$focusPart}; $movementSelection = $stateSelection; $weatherMode = "watch"]]
+[[무겁게 가라앉거나 멈추는 부분->거리두어 보기][$movementMode = "heavy"; $focusPart = "무겁게 가라앉거나 멈추는 부분"; $stateSelection = {id:"heavy",label:$focusPart}; $movementSelection = $stateSelection; $weatherMode = "cloud"]]
+[[서두르거나 계속 움직이려는 부분->거리두어 보기][$movementMode = "energized"; $focusPart = "서두르거나 계속 움직이려는 부분"; $stateSelection = {id:"energized",label:$focusPart}; $movementSelection = $stateSelection; $weatherMode = "bright"]]
+[[아무것도 느끼지 않게 하는 부분->거리두어 보기][$movementMode = "unclear"; $focusPart = "아무것도 느끼지 않게 하는 부분"; $stateSelection = {id:"unclear",label:$focusPart}; $movementSelection = $stateSelection; $weatherMode = "fog"]]
+[[지금은 눈에 띄는 부분이 없다->간단 관측 종료][$movementMode = "calm"; $focusPart = "지금은 눈에 띄는 부분이 없음"; $stateSelection = {id:"calm",label:$focusPart}; $movementSelection = $stateSelection; $weatherMode = "calm"]]
 </div>
-<div class="custom-choice-link">[[내 상태를 직접 적기->상태 직접 적기]]</div>
+<div class="custom-choice-link">[[내 말로 적기->상태 직접 적기]]</div>
+</div>
+
+
+:: 거리두어 보기 {"position":"520,700","size":"180,120"}
+<div class="room-input-stage compact-observation">
+<p class="observation-step">2 / 5 · 조금 떨어져 보기</p>
+<h1>‘<<print $focusPart>>’을 잠시 날씨처럼 바라본다면, 어떤 거리가 편한가요?</h1>
+<p>없애거나 설명하려 하지 않아도 됩니다. 지금 가능한 만큼만 골라주세요.</p>
+<div class="choices">
+[[바로 곁에서 느껴도 괜찮다->걱정과 보호][$focusDistance = "바로 곁에서 느껴도 괜찮은 거리"]]
+[[한 걸음 떨어져 바라보고 싶다->걱정과 보호][$focusDistance = "한 걸음 떨어져 바라보는 거리"]]
+[[멀리 있는 날씨처럼 보고 싶다->걱정과 보호][$focusDistance = "멀리 있는 날씨처럼 바라보는 거리"]]
+[[지금은 거리를 정하기 어렵다->걱정과 보호][$focusDistance = "아직 알 수 없음"]]
+[[이 질문은 건너뛴다->걱정과 보호][$focusDistance = "건너뜀"]]
+</div>
+</div>
+
+
+:: 걱정과 보호 {"position":"740,700","size":"190,120"}
+<div class="room-input-stage compact-observation">
+<p class="observation-step">3 / 5 · 걱정과 보호</p>
+<h1>이 부분은 무엇을 걱정하거나 지키려는 것 같나요?</h1>
+<p>처음 고른 ‘<<print $focusPart>>’에 가까운 선택지를 먼저 모았습니다.</p>
+<div class="choices">
+<<if $movementMode is "anxious">>
+[[중요한 신호를 놓치지 않으려 한다->필요와 다음 행동][$focusConcern = "중요한 신호를 놓칠까 걱정함"; $focusProtection = "안전과 대비"]]
+[[누군가 실망하거나 나를 탓할까 걱정한다->필요와 다음 행동][$focusConcern = "누군가 실망하거나 탓할까 걱정함"; $focusProtection = "관계와 인정"]]
+<<elseif $movementMode is "overwhelmed">>
+[[감정이 더 커져 감당하기 어려울까 걱정한다->필요와 다음 행동][$focusConcern = "감정이 감당하기 어려워질까 걱정함"; $focusProtection = "버틸 수 있는 상태"]]
+[[한꺼번에 너무 많은 것을 놓칠까 걱정한다->필요와 다음 행동][$focusConcern = "중요한 것을 한꺼번에 놓칠까 걱정함"; $focusProtection = "통제감과 우선순위"]]
+<<elseif $movementMode is "heavy" or $movementMode is "unclear">>
+[[더 다치거나 지치지 않게 거리를 만든다->필요와 다음 행동][$focusConcern = "더 다치거나 지칠까 걱정함"; $focusProtection = "회복할 여유"]]
+[[감당하기 어려운 감정이 올라오지 않게 막는다->필요와 다음 행동][$focusConcern = "감당하기 어려운 감정이 올라올까 걱정함"; $focusProtection = "정서적 안전"]]
+<<else>>
+[[멈추면 뒤처지거나 중요한 일을 놓칠까 걱정한다->필요와 다음 행동][$focusConcern = "멈추면 뒤처지거나 놓칠까 걱정함"; $focusProtection = "성취와 안정"]]
+[[가만히 있으면 불안해질까 걱정한다->필요와 다음 행동][$focusConcern = "가만히 있으면 불안해질까 걱정함"; $focusProtection = "통제감"]]
+<</if>>
+[[정확히는 모르지만 나를 지키려는 것 같다->필요와 다음 행동][$focusConcern = "아직 알 수 없음"; $focusProtection = "나를 지키려는 의도"]]
+[[지금은 이유를 알아내지 않고 넘어간다->필요와 다음 행동][$focusConcern = "건너뜀"; $focusProtection = "건너뜀"]]
+</div>
+</div>
+
+
+:: 필요와 다음 행동 {"position":"980,700","size":"190,120"}
+<div class="room-input-stage compact-observation">
+<p class="observation-step">4 / 5 · 지금 필요한 것</p>
+<h1>이 부분을 고치지 않은 채, 지금 나에게 해줄 수 있는 작은 일은 무엇인가요?</h1>
+<div class="choices">
+[[1분 동안 멈추고 몸을 느낀다->간단 관측 요약][$focusNext = "1분 동안 멈추고 몸 느끼기"]]
+[[해야 할 일을 하나만 남긴다->간단 관측 요약][$focusNext = "해야 할 일을 하나만 남기기"]]
+[[물이나 음식, 휴식처럼 기본적인 필요를 챙긴다->간단 관측 요약][$focusNext = "기본적인 필요 챙기기"]]
+[[믿을 만한 사람에게 지금 상태를 짧게 알린다->간단 관측 요약][$focusNext = "믿을 만한 사람에게 짧게 알리기"]]
+[[오늘은 관찰한 것만으로 마친다->간단 관측 요약][$focusNext = "오늘은 관찰한 것만으로 마치기"]]
+[[아직 무엇이 필요한지 모르겠다->간단 관측 요약][$focusNext = "아직 알 수 없음"]]
+</div>
+</div>
+
+
+:: 간단 관측 요약 {"position":"1220,700","size":"190,120"}
+<div class="compact-summary">
+<p class="observation-step">5 / 5 · 짧은 기록</p>
+<h1>오늘의 내면 날씨</h1>
+<p>오늘 가장 눈에 띈 것은 <strong>‘<<print $focusPart>>’</strong>이었습니다.</p>
+<<if $focusDistance isnot "건너뜀">><p>지금 가능한 거리는 <strong><<print $focusDistance>></strong>입니다.</p><</if>>
+<<if $focusConcern isnot "건너뜀">><p>이 부분이 걱정하는 것은 <strong><<print $focusConcern>></strong>입니다.</p><</if>>
+<<if $focusProtection isnot "건너뜀">><p>이 부분은 <strong><<print $focusProtection>></strong>을 지키려는 것일 수 있습니다.</p><</if>>
+<p>지금의 선택은 <strong><<print $focusNext>></strong>입니다.</p>
+<div class="transmission">이 기록은 진단이나 해석이 아니라, 지금의 반응을 잠시 바라본 관찰입니다. 이유를 모두 알아내지 않아도 충분합니다.</div>
+<div class="choices">
+[[관측을 마친다->관측 종료]]
+<<link "다른 부분을 살펴본다">><<set $focusDistance = "">><<set $focusConcern = "">><<set $focusProtection = "">><<set $focusNext = "">><<goto "들어다보기">><</link>>
+</div>
+</div>
+
+
+:: 간단 관측 종료 {"position":"1220,860","size":"190,100"}
+<div class="compact-summary">
+<p class="observation-step">관측 완료</p>
+<h1>지금은 잔잔한 날씨입니다</h1>
+<p>눈에 띄는 부분이 없다는 관찰도 충분합니다. 더 깊이 찾거나 이름 붙일 필요 없이 여기서 마칠 수 있습니다.</p>
+<div class="choices">[[관측을 마친다->관측 종료]] [[그래도 살펴본다->거리두어 보기]]</div>
 </div>
 
 
