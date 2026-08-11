@@ -5104,6 +5104,44 @@ setup.compactAudioScene = function (passageName, movementMode) {
 	}
 	return "hub";
 };
+setup.compactRoomForMovement = function (movementMode) {
+	if (movementMode === "anxious") return "lighthouse";
+	if (movementMode === "overwhelmed" || movementMode === "energized") return "wave";
+	return "fog";
+};
+setup.enterCompactRoom = function () {
+	var variables = State.variables;
+	var room = setup.compactRoomForMovement(variables.movementMode);
+	if (variables.currentRoom !== room || variables.sceneMode !== room) {
+		setup.enterRoom(room);
+		variables.roomPresence[room] = "느껴짐";
+		variables.roomBehaviors[room] = variables.focusPart || "오늘 가장 눈에 띈 반응";
+		if (setup.audio) {
+			setup.audio.setReadingActive(false);
+			setup.audio.playSfx("roomEnter");
+			if (room === "wave") setup.audio.playSfx("submerge");
+			if (room === "fog") setup.audio.playSfx("fogReveal");
+			if (room === "lighthouse") setup.audio.playSfx("lighthouse");
+			setup.audio.setScene(room);
+		}
+	}
+	variables.focusRoom = room;
+};
+setup.finalizeCompactRoom = function () {
+	var variables = State.variables;
+	var room = variables.focusRoom || setup.compactRoomForMovement(variables.movementMode);
+	if (setup.roomIds.indexOf(room) === -1) {
+		setup.returnToObservatory();
+		return;
+	}
+	variables.roomPresence[room] = "느껴짐";
+	variables.roomBehaviors[room] = variables.focusPart || "오늘 가장 눈에 띈 반응";
+	variables.roomWorries[room] = variables.focusConcern || "아직 알 수 없음";
+	variables.roomProtections[room] = variables.focusProtection || "나를 지키려는 의도";
+	variables.roomConditions[room] = variables.focusNext || "관찰한 것만으로 마치기";
+	variables.roomDistances[room] = variables.focusDistance || "아직 알 수 없음";
+	setup.completeRoom(room);
+};
 /* END INNER WEATHER AUDIO ENGINE */
 
 /* BEGIN COMPACT OBSERVATION PROGRESS */
@@ -5118,6 +5156,7 @@ setup.saveObservationProgress = function (passageName) {
 		movementMode:variables.movementMode || "",
 		weatherMode:variables.weatherMode || "",
 		focusPart:variables.focusPart || "",
+		focusRoom:variables.focusRoom || "",
 		focusDistance:variables.focusDistance || "",
 		focusConcern:variables.focusConcern || "",
 		focusProtection:variables.focusProtection || "",
@@ -5272,7 +5311,7 @@ $(document).on(":passagedisplay", function () {
 	var discoveryPassages = [
 		"첫 진입","들어다보기","상태 직접 적기","상태에서의 행동","행동 직접 적기",
 		"멈추기 어려운 감각","마음의 시야","날씨 만들기","몸의 자리","감각의 질감","떠오르는 장면",
-		"거리두어 보기","걱정과 보호","필요와 다음 행동","간단 관측 요약","간단 관측 종료"
+		"간단 관측 종료"
 	];
 	var isDiscovery = discoveryPassages.indexOf(passage()) !== -1;
 	var isFirstEntry = passage() === "첫 진입";
@@ -5291,6 +5330,10 @@ $(document).on(":passagedisplay", function () {
 		"파도 거리","파도 수면","파도 반응","파도의 의도","파도 이름"
 	];
 	var isWaveRoom = waveRoomPassages.indexOf(passage()) !== -1;
+	var compactRoomPassages = ["거리두어 보기", "걱정과 보호", "필요와 다음 행동"];
+	var isCompactRoomPassage = compactRoomPassages.indexOf(passage()) !== -1;
+	if (isCompactRoomPassage && State.variables.currentRoom === "fog") isFogRoom = true;
+	if (isCompactRoomPassage && State.variables.currentRoom === "wave") isWaveRoom = true;
 	var namePassages = ["등대 이름","파도 이름","안개 이름","부분 이름"];
 	var isRoomName = namePassages.indexOf(passage()) !== -1;
 	var isAbout = false;
@@ -5536,7 +5579,7 @@ if (!setup.audioInteractionBound) {
 <<set $roomPermissions = { lighthouse:"", wave:"", fog:"" }>>
 <<set $roomConditions = { lighthouse:"", wave:"", fog:"" }>>
 <<set $primaryRoomChoice = "">><<set $finalPosition = "">><<set $smallAction = "">>
-<<set $focusPart = "">><<set $focusDistance = "">>
+<<set $focusPart = "">><<set $focusRoom = "">><<set $focusDistance = "">>
 <<set $focusConcern = "">><<set $focusProtection = "">><<set $focusNext = "">>
 <<set $selfLight = 0.2>>
 <<set $returnPassage = "들어다보기">>
@@ -5634,7 +5677,9 @@ if (!setup.audioInteractionBound) {
 
 
 :: 거리두어 보기 {"position":"520,700","size":"180,120"}
+<<run setup.enterCompactRoom()>>
 <div class="room-input-stage compact-observation">
+<p class="room-report-eyebrow"><<print setup.roomLabel($currentRoom)>></p>
 <p class="observation-step">2 / 5 · 조금 떨어져 보기</p>
 <h1>‘<<print $focusPart>>’을 잠시 날씨처럼 바라본다면, 어떤 거리가 편한가요?</h1>
 <p>없애거나 설명하려 하지 않아도 됩니다. 지금 가능한 만큼만 골라주세요.</p>
@@ -5649,7 +5694,9 @@ if (!setup.audioInteractionBound) {
 
 
 :: 걱정과 보호 {"position":"740,700","size":"190,120"}
+<<run setup.enterCompactRoom()>>
 <div class="room-input-stage compact-observation">
+<p class="room-report-eyebrow"><<print setup.roomLabel($currentRoom)>></p>
 <p class="observation-step">3 / 5 · 걱정과 보호</p>
 <h1>이 부분은 무엇을 걱정하거나 지키려는 것 같나요?</h1>
 <p>처음 고른 ‘<<print $focusPart>>’에 가까운 선택지를 먼저 모았습니다.</p>
@@ -5674,7 +5721,9 @@ if (!setup.audioInteractionBound) {
 
 
 :: 필요와 다음 행동 {"position":"980,700","size":"190,120"}
+<<run setup.enterCompactRoom()>>
 <div class="room-input-stage compact-observation">
+<p class="room-report-eyebrow"><<print setup.roomLabel($currentRoom)>></p>
 <p class="observation-step">4 / 5 · 지금 필요한 것</p>
 <h1>이 부분을 고치지 않은 채, 지금 나에게 해줄 수 있는 작은 일은 무엇인가요?</h1>
 <div class="choices">
@@ -5689,6 +5738,7 @@ if (!setup.audioInteractionBound) {
 
 
 :: 간단 관측 요약 {"position":"1220,700","size":"190,120"}
+<<run setup.finalizeCompactRoom()>>
 <<run setTimeout(setup.printObservationRecord,0)>>
 <div class="compact-summary">
 <p class="observation-step">5 / 5 · 짧은 기록</p>
